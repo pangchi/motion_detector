@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Motion Detector</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 16px; }
+  h1 { font-size: 1.2rem; color: #0af; margin-bottom: 12px; }
+
+  /* ---- layout ---- */
+  .layout { display: flex; gap: 16px; flex-wrap: wrap; }
+  .panel { background: #1c1c1c; border: 1px solid #333; border-radius: 8px; padding: 14px; }
+
+  /* ---- video panel ---- */
+  .video-panel { flex: 1 1 600px; }
+  .video-wrapper {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    user-select: none;
+  }
+  #stream { display: block; max-width: 100%; border-radius: 4px; }
+
+  #zoneCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    cursor: crosshair;
+    border-radius: 4px;
+  }
+
+  /* ---- controls panel ---- */
+  .controls-panel { flex: 0 0 220px; display: flex; flex-direction: column; gap: 12px; }
+
+  .stat-box { background: #111; border-radius: 6px; padding: 10px 12px; }
+  .stat-label { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }
+  .stat-value { font-size: 1.1rem; font-weight: 600; margin-top: 2px; }
+
+  button {
+    width: 100%; padding: 10px 0; border: none; border-radius: 6px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity .15s;
+  }
+  button:active { opacity: .75; }
+
+  #alertBtn { background: #0a0; color: #fff; }
+  #alertBtn.off { background: #a00; }
+
+  #saveZoneBtn { background: #0af; color: #111; }
+  #resetZoneBtn { background: #444; color: #eee; }
+
+  .hint { font-size: 0.72rem; color: #666; line-height: 1.4; }
+
+  /* ---- recordings table ---- */
+  .recordings-panel { width: 100%; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; padding: 6px 8px; color: #888; border-bottom: 1px solid #333; }
+  td { padding: 5px 8px; border-bottom: 1px solid #222; }
+  tr:last-child td { border-bottom: none; }
+  .empty { color: #555; font-size: 0.82rem; padding: 8px 0; }
+
+  /* ---- settings panel ---- */
+  .settings-panel { flex: 0 0 220px; display: flex; flex-direction: column; gap: 12px; }
+
+  .field-group { display: flex; flex-direction: column; gap: 4px; }
+  .field-label { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }
+  .field-desc  { font-size: 0.68rem; color: #555; margin-top: 1px; }
+
+  input[type=range] {
+    width: 100%;
+    accent-color: #0af;
+    cursor: pointer;
+  }
+
+  .range-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .range-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #0af;
+    min-width: 38px;
+    text-align: right;
+  }
+
+  #saveSettingsBtn { background: #0af; color: #111; }
+  #settingsFeedback { min-height: 1.2em; }
+
+  /* ---- telegram / network panel ---- */
+  .telegram-panel { flex: 0 0 220px; display: flex; flex-direction: column; gap: 12px; }
+
+  .net-row { display: flex; flex-direction: column; gap: 6px; }
+  .net-pill {
+    background: #111;
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .net-pill .stat-label { margin: 0; }
+  .net-pill .net-val {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #0af;
+    font-family: 'Courier New', monospace;
+    word-break: break-all;
+  }
+
+  .tg-input {
+    width: 100%;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: #eee;
+    font-family: 'Courier New', monospace;
+    font-size: 0.82rem;
+    transition: border-color .15s;
+  }
+  .tg-input:focus { outline: none; border-color: #0af; }
+  .tg-input::placeholder { color: #444; }
+
+  #saveTgBtn  { background: #0a0; color: #fff; }
+  #testTgBtn  { background: #444; color: #eee; margin-top: -4px; }
+  #tgFeedback { min-height: 1.2em; }
+
+  hr.divider { border: none; border-top: 1px solid #2a2a2a; margin: 2px 0; }
+</style>
+</head>
+<body>
+
+<h1>🎥 Motion Detector</h1>
+
+<div class="layout">
+
+  <!-- Video + canvas overlay -->
+  <div class="panel video-panel">
+    <div class="video-wrapper" id="videoWrapper">
+      <img id="stream" 
+        src="/video_feed" 
+        alt="Live feed"
+        style="display: block; max-width: 100%; border-radius: 4px; image-rendering: -webkit-optimize-contrast;"
+        crossorigin="anonymous">
+      <canvas id="zoneCanvas"></canvas>
+    </div>
+    <p class="hint" style="margin-top:8px;">
+      Draw a new motion zone by clicking and dragging on the video.
+      Drag the existing box to move it; drag the ↘ handle to resize.
+    </p>
+  </div>
+
+  <!-- Detection Settings -->
+  <div class="panel settings-panel">
+    <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Detection Settings</h2>
+
+    <div class="field-group">
+      <div class="field-label">Sensitivity Threshold</div>
+      <div class="range-row">
+        <input type="range" id="thresholdRange" min="1" max="255" value="25">
+        <span class="range-value" id="thresholdVal">25</span>
+      </div>
+      <div class="field-desc">Lower = more sensitive. Pixel change intensity (1–255).</div>
+    </div>
+
+    <div class="field-group">
+      <div class="field-label">Min Motion Area (px²)</div>
+      <div class="range-row">
+        <input type="range" id="minAreaRange" min="50" max="10000" step="50" value="500">
+        <span class="range-value" id="minAreaVal">500</span>
+      </div>
+      <div class="field-desc">Ignore movement smaller than this area.</div>
+    </div>
+
+    <div class="field-group">
+      <div class="field-label">Recording Duration (s)</div>
+      <div class="range-row">
+        <input type="range" id="durationRange" min="5" max="300" step="5" value="30">
+        <span class="range-value" id="durationVal">30s</span>
+      </div>
+      <div class="field-desc">How long to record after motion is detected (5–300s).</div>
+    </div>
+
+    <button id="saveSettingsBtn">💾 Save Settings</button>
+    <div id="settingsFeedback" class="hint"></div>
+
+    <hr class="divider">
+
+    <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Motion Zone</h2>
+    <button id="saveZoneBtn">💾 Save Zone</button>
+    <button id="resetZoneBtn">↺ Reset Zone</button>
+    <div id="zoneFeedback" class="hint"></div>
+  </div>
+
+  <!-- Status Controls -->
+  <div class="panel controls-panel">
+
+    <div class="stat-box">
+      <div class="stat-label">Status</div>
+      <div class="stat-value" id="statusText">—</div>
+    </div>
+
+    <div class="stat-box">
+      <div class="stat-label">Storage</div>
+      <div class="stat-value" id="storageText">—</div>
+    </div>
+
+    <div class="stat-box">
+      <div class="stat-label">Recordings</div>
+      <div class="stat-value" id="recCount">—</div>
+    </div>
+
+    <div class="stat-box">
+      <div class="stat-label">Local Time</div>
+      <div class="stat-value" id="clockText" style="font-size:0.95rem;letter-spacing:.03em;">—</div>
+    </div>
+
+    <button id="alertBtn">🔔 Alerts: ON</button>
+
+  </div>
+
+  <!-- Telegram & Network -->
+  <div class="panel telegram-panel">
+    <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Network Info</h2>
+
+    <div class="net-row">
+      <div class="net-pill">
+        <span class="stat-label"></span>
+        <span class="net-val" id="netHostname">—</span>
+      </div>
+      <div class="net-pill">
+        <span class="stat-label"></span>
+        <span class="net-val" id="netIp">—</span>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Telegram Credentials</h2>
+
+    <div class="field-group">
+      <div class="field-label">Bot Token</div>
+      <input class="tg-input" type="password" id="tgToken"
+             placeholder="1234567890:ABCdef…" autocomplete="off">
+    </div>
+
+    <div class="field-group">
+      <div class="field-label">Chat ID</div>
+      <input class="tg-input" type="text" id="tgChatId"
+             placeholder="-100123456789" autocomplete="off">
+    </div>
+
+    <button id="saveTgBtn">💾 Save Credentials</button>
+    <button id="testTgBtn">📨 Send Test Alert</button>
+    <div id="tgFeedback" class="hint"></div>
+  </div>
+
+  <!-- Recordings list -->
+  <div class="panel recordings-panel">
+    <h2 style="font-size:.9rem;color:#888;margin-bottom:8px;">Recent Recordings</h2>
+    <table>
+      <thead><tr><th>File</th><th>Size</th><th>Created</th></tr></thead>
+      <tbody id="recTable"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+// -----------------------------------------------------------------------
+// Canvas / zone drawing
+// -----------------------------------------------------------------------
+const img     = document.getElementById('stream');
+const canvas  = document.getElementById('zoneCanvas');
+const ctx     = canvas.getContext('2d');
+const wrapper = document.getElementById('videoWrapper');
+
+let zone  = { x: 0, y: 0, w: 1, h: 1 };
+let pZone = { x: 0, y: 0, w: 0, h: 0 };
+
+let dragMode  = null;
+let dragStart = null;
+let origZone  = null;
+
+const HANDLE = 12;
+
+function syncCanvas() {
+  canvas.width  = img.offsetWidth;
+  canvas.height = img.offsetHeight;
+  pZone = normToPixel(zone);
+  drawZone();
+}
+
+function normToPixel(z) {
+  return { x: z.x * canvas.width, y: z.y * canvas.height,
+           w: z.w * canvas.width, h: z.h * canvas.height };
+}
+
+function pixelToNorm(p) {
+  return { x: p.x / canvas.width, y: p.y / canvas.height,
+           w: p.w / canvas.width, h: p.h / canvas.height };
+}
+
+function clampZone(z) {
+  let { x, y, w, h } = z;
+  w = Math.max(0.02, w);
+  h = Math.max(0.02, h);
+  x = Math.max(0, Math.min(x, 1 - w));
+  y = Math.max(0, Math.min(y, 1 - h));
+  return { x, y, w, h };
+}
+
+function drawZone() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const { x, y, w, h } = pZone;
+  ctx.fillStyle = 'rgba(0,0,0,0.40)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(x, y, w, h);
+  ctx.strokeStyle = '#ff9900';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#ff9900';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('Motion Zone', x + 4, y + 14);
+  ctx.fillRect(x + w - HANDLE, y + h - HANDLE, HANDLE, HANDLE);
+}
+
+function getEventPos(e) {
+  const rect    = canvas.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return { x: clientX - rect.left, y: clientY - rect.top };
+}
+
+function hitTest(pos) {
+  const { x, y, w, h } = pZone;
+  if (pos.x >= x + w - HANDLE && pos.x <= x + w &&
+      pos.y >= y + h - HANDLE && pos.y <= y + h) return 'resize';
+  if (pos.x > x && pos.x < x + w && pos.y > y && pos.y < y + h) return 'move';
+  return 'draw';
+}
+
+canvas.addEventListener('mousedown', onDown);
+canvas.addEventListener('touchstart', onDown, { passive: false });
+
+function onDown(e) {
+  e.preventDefault();
+  const pos = getEventPos(e);
+  dragMode  = hitTest(pos);
+  dragStart = pos;
+  origZone  = { ...zone };
+  if (dragMode === 'draw') {
+    const nx = pos.x / canvas.width;
+    const ny = pos.y / canvas.height;
+    zone = { x: nx, y: ny, w: 0.001, h: 0.001 };
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup',   onUp);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend',  onUp);
+}
+
+function onMove(e) {
+  e.preventDefault();
+  const pos = getEventPos(e);
+  const dx  = (pos.x - dragStart.x) / canvas.width;
+  const dy  = (pos.y - dragStart.y) / canvas.height;
+  if (dragMode === 'draw') {
+    const nx = pos.x / canvas.width;
+    const ny = pos.y / canvas.height;
+    zone.x = Math.min(origZone.x, nx);
+    zone.y = Math.min(origZone.y, ny);
+    zone.w = Math.abs(nx - origZone.x);
+    zone.h = Math.abs(ny - origZone.y);
+  } else if (dragMode === 'move') {
+    zone.x = origZone.x + dx;
+    zone.y = origZone.y + dy;
+  } else if (dragMode === 'resize') {
+    zone.w = origZone.w + dx;
+    zone.h = origZone.h + dy;
+  }
+  zone  = clampZone(zone);
+  pZone = normToPixel(zone);
+  drawZone();
+}
+
+function onUp() {
+  document.removeEventListener('mousemove', onMove);
+  document.removeEventListener('mouseup',   onUp);
+  document.removeEventListener('touchmove', onMove);
+  document.removeEventListener('touchend',  onUp);
+  dragMode = null;
+  zone  = clampZone(zone);
+  pZone = normToPixel(zone);
+  drawZone();
+}
+
+// -----------------------------------------------------------------------
+// Live clock
+// -----------------------------------------------------------------------
+function updateClock() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  document.getElementById('clockText').textContent =
+    `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ` +
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+const resizeObserver = new ResizeObserver(syncCanvas);
+resizeObserver.observe(img);
+img.addEventListener('load', syncCanvas);
+window.addEventListener('resize', syncCanvas);
+setTimeout(syncCanvas, 200);
+
+// -----------------------------------------------------------------------
+// Save / Reset zone
+// -----------------------------------------------------------------------
+document.getElementById('saveZoneBtn').addEventListener('click', async () => {
+  const fb = document.getElementById('zoneFeedback');
+  fb.style.color = '#888'; fb.textContent = 'Saving…';
+  try {
+    const res  = await fetch('/save_zone', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(zone)
+    });
+    const data = await res.json();
+    if (data.success) { fb.style.color = '#0a0'; fb.textContent = '✔ Zone saved'; }
+    else              { fb.style.color = '#f44'; fb.textContent = 'Error: ' + data.error; }
+  } catch { fb.style.color = '#f44'; fb.textContent = 'Network error'; }
+  setTimeout(() => fb.textContent = '', 3000);
+});
+
+document.getElementById('resetZoneBtn').addEventListener('click', async () => {
+  zone = { x: 0, y: 0, w: 1, h: 1 };
+  pZone = normToPixel(zone);
+  drawZone();
+  await fetch('/save_zone', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(zone) });
+  const fb = document.getElementById('zoneFeedback');
+  fb.style.color = '#0af'; fb.textContent = '↺ Zone reset to full frame';
+  setTimeout(() => fb.textContent = '', 3000);
+});
+
+// -----------------------------------------------------------------------
+// Alerts toggle
+// -----------------------------------------------------------------------
+const alertBtn = document.getElementById('alertBtn');
+
+alertBtn.addEventListener('click', async () => {
+  const res  = await fetch('/toggle_alerts', { method: 'POST' });
+  const data = await res.json();
+  updateAlertBtn(data.alerts_enabled);
+});
+
+function updateAlertBtn(enabled) {
+  alertBtn.textContent = enabled ? '🔔 Alerts: ON' : '🔕 Alerts: OFF';
+  alertBtn.classList.toggle('off', !enabled);
+}
+
+// -----------------------------------------------------------------------
+// Status polling
+// -----------------------------------------------------------------------
+async function pollStatus() {
+  try {
+    const res  = await fetch('/status');
+    const data = await res.json();
+    document.getElementById('statusText').textContent =
+      data.is_recording ? '🔴 Recording' : '🟢 Monitoring';
+    document.getElementById('storageText').textContent = data.storage_usage + '%';
+    document.getElementById('recCount').textContent    = data.recordings_count;
+    updateAlertBtn(data.alerts_enabled);
+    if (!window._zoneSynced && data.motion_zone) {
+      zone  = data.motion_zone;
+      pZone = normToPixel(zone);
+      drawZone();
+      window._zoneSynced = true;
+    }
+  } catch(e) {}
+}
+
+async function pollRecordings() {
+  try {
+    const res  = await fetch('/recordings');
+    const recs = await res.json();
+    const tbody = document.getElementById('recTable');
+    if (recs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">No recordings yet</td></tr>';
+    } else {
+      tbody.innerHTML = recs.slice(0, 20).map(r =>
+        `<tr>
+          <td style="font-family:monospace;font-size:.78rem;">${r.filename}</td>
+          <td>${r.size_mb} MB</td>
+          <td>${r.created}</td>
+        </tr>`
+      ).join('');
+    }
+  } catch(e) {}
+}
+
+// -----------------------------------------------------------------------
+// Detection settings
+// -----------------------------------------------------------------------
+function bindRange(rangeId, displayId, formatter) {
+  const range   = document.getElementById(rangeId);
+  const display = document.getElementById(displayId);
+  range.addEventListener('input', () => { display.textContent = formatter(range.value); });
+}
+
+bindRange('thresholdRange', 'thresholdVal', v => v);
+bindRange('minAreaRange',   'minAreaVal',   v => v);
+bindRange('durationRange',  'durationVal',  v => v + 's');
+
+async function loadSettings() {
+  try {
+    const res  = await fetch('/settings');
+    const data = await res.json();
+    document.getElementById('thresholdRange').value = data.threshold;
+    document.getElementById('minAreaRange').value   = data.min_area;
+    document.getElementById('durationRange').value  = data.recording_duration;
+    document.getElementById('thresholdVal').textContent = data.threshold;
+    document.getElementById('minAreaVal').textContent   = data.min_area;
+    document.getElementById('durationVal').textContent  = data.recording_duration + 's';
+  } catch(e) { console.warn('Could not load settings:', e); }
+}
+
+loadSettings();
+
+document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+  const fb = document.getElementById('settingsFeedback');
+  fb.style.color = '#888'; fb.textContent = 'Saving…';
+  const payload = {
+    threshold:          parseInt(document.getElementById('thresholdRange').value),
+    min_area:           parseInt(document.getElementById('minAreaRange').value),
+    recording_duration: parseInt(document.getElementById('durationRange').value),
+  };
+  try {
+    const res  = await fetch('/update_settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.success) {
+      fb.style.color = '#0a0'; fb.textContent = '✔ Settings saved';
+    } else {
+      const errMsgs = Object.entries(data.errors).map(([k,v]) => `${k}: ${v}`).join('; ');
+      fb.style.color = '#f44'; fb.textContent = 'Error — ' + errMsgs;
+    }
+  } catch { fb.style.color = '#f44'; fb.textContent = 'Network error'; }
+  setTimeout(() => fb.textContent = '', 3000);
+});
+
+// -----------------------------------------------------------------------
+// Network info
+// -----------------------------------------------------------------------
+async function loadNetworkInfo() {
+  try {
+    const res  = await fetch('/network_info');
+    const data = await res.json();
+    document.getElementById('netHostname').textContent = data.hostname || '—';
+    document.getElementById('netIp').textContent       = data.ip       || '—';
+  } catch {
+    document.getElementById('netHostname').textContent = 'n/a';
+    document.getElementById('netIp').textContent       = 'n/a';
+  }
+}
+
+loadNetworkInfo();
+
+// -----------------------------------------------------------------------
+// Telegram credentials
+// -----------------------------------------------------------------------
+function setTgFeedback(msg, color) {
+  const el = document.getElementById('tgFeedback');
+  el.style.color = color;
+  el.textContent = msg;
+}
+
+document.getElementById('saveTgBtn').addEventListener('click', async () => {
+  const token  = document.getElementById('tgToken').value.trim();
+  const chatId = document.getElementById('tgChatId').value.trim();
+
+  if (!token && !chatId) {
+    setTgFeedback('Enter at least one field to update.', '#f44');
+    return;
+  }
+
+  const payload = {};
+  if (token)  payload.bot_token = token;
+  if (chatId) payload.chat_id   = chatId;
+
+  setTgFeedback('Saving…', '#888');
+  try {
+    const res  = await fetch('/update_telegram', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setTgFeedback('✔ Credentials saved', '#0a0');
+      document.getElementById('tgToken').value  = '';
+      document.getElementById('tgChatId').value = '';
+    } else {
+      const errs = data.errors
+        ? Object.entries(data.errors).map(([k,v]) => `${k}: ${v}`).join(' · ')
+        : (data.error || 'Unknown error');
+      setTgFeedback('✗ ' + errs, '#f44');
+    }
+  } catch { setTgFeedback('✗ Network error', '#f44'); }
+  setTimeout(() => document.getElementById('tgFeedback').textContent = '', 4000);
+});
+
+document.getElementById('testTgBtn').addEventListener('click', async () => {
+  setTgFeedback('Sending…', '#888');
+  try {
+    const res  = await fetch('/test_telegram', { method: 'POST' });
+    const data = await res.json();
+    setTgFeedback(data.success ? '✔ Test message sent' : '✗ ' + (data.error || 'Failed'), data.success ? '#0a0' : '#f44');
+  } catch { setTgFeedback('✗ Network error', '#f44'); }
+  setTimeout(() => document.getElementById('tgFeedback').textContent = '', 4000);
+});
+
+// -----------------------------------------------------------------------
+// Boot
+// -----------------------------------------------------------------------
+pollStatus();
+pollRecordings();
+setInterval(pollStatus,     2000);
+setInterval(pollRecordings, 10000);
+
+// Add this near the bottom of your script, in the boot section
+img.addEventListener('error', () => {
+    console.warn('Stream image error - retrying...');
+    setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
+});
+</script>
+</body>
+</html>
