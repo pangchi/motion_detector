@@ -171,8 +171,8 @@ class MotionDetector:
             return
         self.is_recording = True
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(self.recordings_path, f"motion_{timestamp}.avi")
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        filename = os.path.join(self.recordings_path, f"motion_{timestamp}.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         fps = int(self.config['camera']['fps'])
         width = int(self.config['camera']['width'])
         height = int(self.config['camera']['height'])
@@ -222,7 +222,7 @@ class MotionDetector:
     def cleanup_old_recordings(self):
         recordings = []
         for filename in os.listdir(self.recordings_path):
-            if filename.endswith('.avi'):
+            if filename.endswith('.mp4'):
                 fp = os.path.join(self.recordings_path, filename)
                 recordings.append((fp, os.path.getctime(fp)))
         recordings.sort(key=lambda x: x[1])
@@ -338,7 +338,7 @@ def status():
     return jsonify({
         'is_recording': detector.is_recording,
         'storage_usage': round(detector.get_storage_usage(), 2),
-        'recordings_count': len([f for f in os.listdir(detector.recordings_path) if f.endswith('.avi')]),
+        'recordings_count': len([f for f in os.listdir(detector.recordings_path) if f.endswith('.mp4')]),
         'alerts_enabled': detector.alerts_enabled,
         'motion_zone': detector.motion_zone,
     })
@@ -347,7 +347,7 @@ def status():
 def recordings():
     recs = []
     for filename in os.listdir(detector.recordings_path):
-        if filename.endswith('.avi'):
+        if filename.endswith('.mp4'):
             filepath = os.path.join(detector.recordings_path, filename)
             size = os.path.getsize(filepath)
             created = datetime.fromtimestamp(os.path.getctime(filepath))
@@ -527,11 +527,8 @@ def safe_path(filename):
 
 @app.route('/recordings/<filename>')
 def view_recording(filename):
-    return send_from_directory(
-        'recordings',
-        filename,
-        as_attachment=False  # opens in browser
-    )
+    path = safe_path(filename)
+    return send_from_directory(RECORDINGS_DIR, os.path.basename(path), mimetype='video/mp4', conditional=True, as_attachment=False)  # opens in browser
 
 @app.route('/download/<filename>')
 def download_recording(filename):
