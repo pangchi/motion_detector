@@ -90,8 +90,7 @@
   #saveSettingsBtn { background: #0af; color: #111; }
   #settingsFeedback { min-height: 1.2em; }
 
-  /* ---- telegram / network panel ---- */
-  .telegram-panel { flex: 0 0 220px; display: flex; flex-direction: column; gap: 12px; }
+  /* ---- network panel ---- */
 
   .net-row { display: flex; flex-direction: column; gap: 6px; }
   .net-pill {
@@ -110,24 +109,6 @@
     font-family: 'Courier New', monospace;
     word-break: break-all;
   }
-
-  .tg-input {
-    width: 100%;
-    background: #111;
-    border: 1px solid #333;
-    border-radius: 6px;
-    padding: 8px 10px;
-    color: #eee;
-    font-family: 'Courier New', monospace;
-    font-size: 0.82rem;
-    transition: border-color .15s;
-  }
-  .tg-input:focus { outline: none; border-color: #0af; }
-  .tg-input::placeholder { color: #444; }
-
-  #saveTgBtn  { background: #0a0; color: #fff; }
-  #testTgBtn  { background: #444; color: #eee; margin-top: -4px; }
-  #tgFeedback { min-height: 1.2em; }
 
   hr.divider { border: none; border-top: 1px solid #2a2a2a; margin: 2px 0; }
 </style>
@@ -199,6 +180,19 @@
   <!-- Status Controls -->
   <div class="panel controls-panel">
 
+    <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Network Info</h2>
+
+    <div class="net-row">
+      <div class="net-pill">
+        <span class="stat-label"></span>
+        <span class="net-val" id="netHostname">—</span>
+      </div>
+      <div class="net-pill">
+        <span class="stat-label"></span>
+        <span class="net-val" id="netIp">—</span>
+      </div>
+    </div>
+
     <div class="stat-box">
       <div class="stat-label">Status</div>
       <div class="stat-value" id="statusText">—</div>
@@ -220,50 +214,26 @@
     </div>
 
     <button id="alertBtn">🔔 Alerts: ON</button>
+      <hr class="divider">
+
+    <button onclick="location.href='/telegram'">⚙️ Telegram Settings</button>
 
   </div>
 
-  <!-- Telegram & Network -->
-  <div class="panel telegram-panel">
-    <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Network Info</h2>
-
-    <div class="net-row">
-      <div class="net-pill">
-        <span class="stat-label"></span>
-        <span class="net-val" id="netHostname">—</span>
-      </div>
-      <div class="net-pill">
-        <span class="stat-label"></span>
-        <span class="net-val" id="netIp">—</span>
-      </div>
-    </div>
-
-    <hr class="divider">
-
-    <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Telegram Credentials</h2>
-
-    <div class="field-group">
-      <div class="field-label">Bot Token</div>
-      <input class="tg-input" type="password" id="tgToken"
-             placeholder="1234567890:ABCdef…" autocomplete="off">
-    </div>
-
-    <div class="field-group">
-      <div class="field-label">Chat ID</div>
-      <input class="tg-input" type="text" id="tgChatId"
-             placeholder="-100123456789" autocomplete="off">
-    </div>
-
-    <button id="saveTgBtn">💾 Save Credentials</button>
-    <button id="testTgBtn">📨 Send Test Alert</button>
-    <div id="tgFeedback" class="hint"></div>
-  </div>
+  <hr class="divider">
 
   <!-- Recordings list -->
   <div class="panel recordings-panel">
     <h2 style="font-size:.9rem;color:#888;margin-bottom:8px;">Recent Recordings</h2>
     <table>
-      <thead><tr><th>File</th><th>Size</th><th>Created</th></tr></thead>
+      <thead>
+      <tr>
+        <th>File</th>
+        <th>Size</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
       <tbody id="recTable"></tbody>
     </table>
   </div>
@@ -499,6 +469,11 @@ async function pollRecordings() {
           <td style="font-family:monospace;font-size:.78rem;">${r.filename}</td>
           <td>${r.size_mb} MB</td>
           <td>${r.created}</td>
+          <td style="white-space:nowrap;">
+            <a href="/recordings/${r.filename}" target="_blank" style="color:#0af;">View</a>
+            &nbsp;|&nbsp;
+            <a href="/download/${r.filename}" style="color:#0af;">Download</a>
+          </td>
         </tr>`
       ).join('');
     }
@@ -574,58 +549,6 @@ async function loadNetworkInfo() {
 
 loadNetworkInfo();
 
-// -----------------------------------------------------------------------
-// Telegram credentials
-// -----------------------------------------------------------------------
-function setTgFeedback(msg, color) {
-  const el = document.getElementById('tgFeedback');
-  el.style.color = color;
-  el.textContent = msg;
-}
-
-document.getElementById('saveTgBtn').addEventListener('click', async () => {
-  const token  = document.getElementById('tgToken').value.trim();
-  const chatId = document.getElementById('tgChatId').value.trim();
-
-  if (!token && !chatId) {
-    setTgFeedback('Enter at least one field to update.', '#f44');
-    return;
-  }
-
-  const payload = {};
-  if (token)  payload.bot_token = token;
-  if (chatId) payload.chat_id   = chatId;
-
-  setTgFeedback('Saving…', '#888');
-  try {
-    const res  = await fetch('/update_telegram', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.success) {
-      setTgFeedback('✔ Credentials saved', '#0a0');
-      document.getElementById('tgToken').value  = '';
-      document.getElementById('tgChatId').value = '';
-    } else {
-      const errs = data.errors
-        ? Object.entries(data.errors).map(([k,v]) => `${k}: ${v}`).join(' · ')
-        : (data.error || 'Unknown error');
-      setTgFeedback('✗ ' + errs, '#f44');
-    }
-  } catch { setTgFeedback('✗ Network error', '#f44'); }
-  setTimeout(() => document.getElementById('tgFeedback').textContent = '', 4000);
-});
-
-document.getElementById('testTgBtn').addEventListener('click', async () => {
-  setTgFeedback('Sending…', '#888');
-  try {
-    const res  = await fetch('/test_telegram', { method: 'POST' });
-    const data = await res.json();
-    setTgFeedback(data.success ? '✔ Test message sent' : '✗ ' + (data.error || 'Failed'), data.success ? '#0a0' : '#f44');
-  } catch { setTgFeedback('✗ Network error', '#f44'); }
-  setTimeout(() => document.getElementById('tgFeedback').textContent = '', 4000);
-});
 
 // -----------------------------------------------------------------------
 // Boot
