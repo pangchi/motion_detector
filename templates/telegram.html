@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram Settings</title>
+
+<style>
+  body {
+    background:#111;
+    color:#eee;
+    font-family:'Segoe UI',sans-serif;
+    padding:20px;
+  }
+
+  .panel {
+    max-width:400px;
+    margin:auto;
+    background:#1c1c1c;
+    border:1px solid #333;
+    border-radius:8px;
+    padding:16px;
+  }
+
+  h1 { font-size:1.1rem; color:#0af; margin-bottom:16px; }
+
+  .field-group { margin-bottom:12px; }
+  .field-label {
+    font-size:.7rem;
+    color:#888;
+    text-transform:uppercase;
+  }
+
+  .tg-input {
+    width:100%;
+    background:#111;
+    border:1px solid #333;
+    border-radius:6px;
+    padding:8px;
+    color:#eee;
+    font-family:monospace;
+  }
+
+  button {
+    width:100%;
+    padding:10px;
+    margin-top:8px;
+    border:none;
+    border-radius:6px;
+    cursor:pointer;
+    font-weight:600;
+  }
+
+  #saveTgBtn { background:#0a0; color:#fff; }
+  #testTgBtn { background:#444; color:#eee; }
+
+  #tgFeedback { margin-top:8px; font-size:.8rem; }
+
+  .back {
+    margin-top:12px;
+    background:#0af;
+    color:#111;
+  }
+</style>
+</head>
+
+<body>
+
+<div class="panel">
+  <h1>📨 Telegram Settings</h1>
+
+  <div class="field-group">
+    <div class="field-label">Bot Token</div>
+    <input type="password" id="tgToken" class="tg-input">
+  </div>
+
+  <div class="field-group">
+    <div class="field-label">Chat ID</div>
+    <input type="text" id="tgChatId" class="tg-input">
+  </div>
+
+  <button id="saveTgBtn">💾 Save Credentials</button>
+  <button id="testTgBtn">📨 Send Test Alert</button>
+
+  <div id="tgFeedback"></div>
+
+  <button class="back" onclick="location.href='/'">← Back to Dashboard</button>
+</div>
+
+<script>
+function setTgFeedback(msg, color) {
+  const el = document.getElementById('tgFeedback');
+  el.style.color = color;
+  el.textContent = msg;
+}
+
+document.getElementById('saveTgBtn').onclick = async () => {
+  const token  = document.getElementById('tgToken').value.trim();
+  const chatId = document.getElementById('tgChatId').value.trim();
+
+  if (!token && !chatId) {
+    setTgFeedback('Enter at least one field.', '#f44');
+    return;
+  }
+
+  const payload = {};
+  if (token) payload.bot_token = token;
+  if (chatId) payload.chat_id = chatId;
+
+  setTgFeedback('Saving...', '#888');
+
+  try {
+    const res = await fetch('/update_telegram', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+      setTgFeedback('✔ Saved', '#0a0');
+      document.getElementById('tgToken').value = '';
+      document.getElementById('tgChatId').value = '';
+    } else {
+      setTgFeedback('✗ Error', '#f44');
+    }
+  } catch {
+    setTgFeedback('✗ Network error', '#f44');
+  }
+};
+
+document.getElementById('testTgBtn').onclick = async () => {
+  setTgFeedback('Sending...', '#888');
+
+  try {
+    const res = await fetch('/test_telegram', { method:'POST' });
+    const data = await res.json();
+
+    setTgFeedback(
+      data.success ? '✔ Sent' : '✗ Failed',
+      data.success ? '#0a0' : '#f44'
+    );
+  } catch {
+    setTgFeedback('✗ Network error', '#f44');
+  }
+};
+</script>
+
+</body>
+</html>
