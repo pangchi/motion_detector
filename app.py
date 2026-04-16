@@ -7,7 +7,7 @@ import socket
 import configparser
 import requests
 from datetime import datetime
-from flask import Flask, render_template, Response, jsonify, request
+from flask import Flask, render_template, Response, jsonify, request, send_from_directory
 import numpy as np
 
 app = Flask(__name__)
@@ -512,6 +512,34 @@ def test_telegram():
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/telegram')
+def telegram_page():
+    return render_template('telegram.html')
+
+RECORDINGS_DIR = os.path.abspath("recordings")
+
+def safe_path(filename):
+    path = os.path.abspath(os.path.join(RECORDINGS_DIR, filename))
+    if not path.startswith(RECORDINGS_DIR):
+        raise ValueError("Invalid path")
+    return path
+
+@app.route('/recordings/<filename>')
+def view_recording(filename):
+    return send_from_directory(
+        'recordings',
+        filename,
+        as_attachment=False  # opens in browser
+    )
+
+@app.route('/download/<filename>')
+def download_recording(filename):
+    try:
+        path = safe_path(filename)
+        return send_from_directory(RECORDINGS_DIR, os.path.basename(path), as_attachment=True)
+    except:
+        return "Invalid file", 400
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
