@@ -258,6 +258,7 @@ let dragStart = null;
 let origZone  = null;
 
 let isDragging = false;
+let snapshotPaused = false;
 
 const HANDLE = 12;
 
@@ -335,10 +336,9 @@ function refreshFrame() {
 
 // run continuously regardless of state
 setInterval(() => {
-    if (!isDragging) {
-        refreshFrame();
-    }
-}, 100); //10 FPS
+  if (snapshotPaused || isDragging || document.hidden) return;  
+  refreshFrame();
+}, 200); //5 FPS
 
 
 canvas.addEventListener('mousedown', onDown);
@@ -423,21 +423,31 @@ setTimeout(syncCanvas, 200);
 document.getElementById('saveZoneBtn').addEventListener('click', async () => {
   const fb = document.getElementById('zoneFeedback');
   fb.style.color = '#888'; fb.textContent = 'Saving…';
+  snapshotPaused = true;   // 👈 pause stream updates
+  
   try {
     const res  = await fetch('/save_zone', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(zone)
-    }).then(() => {
+    });
             imgage.src = "/snapshot?t=" + Date.now();   // ✅ FORCE REFRESH
-        });
+    
     const data = await res.json();
     if (data.success) { fb.style.color = '#0a0'; fb.textContent = '✔ Zone saved'; }
     else              { fb.style.color = '#f44'; fb.textContent = 'Error: ' + data.error; }
   } catch { fb.style.color = '#f44'; fb.textContent = 'Network error'; }
+
+  // resume after short stabilization window
+  setTimeout(() => {
+    snapshotPaused = false;
+  }, 500);
+
   setTimeout(() => fb.textContent = '', 3000);
 });
 
 document.getElementById('resetZoneBtn').addEventListener('click', async () => {
+  snapshotPaused = true;   // 👈 pause stream updates
+  
   zone = { x: 0, y: 0, w: 1, h: 1 };
   pZone = normToPixel(zone);
   drawZone();
@@ -445,6 +455,12 @@ document.getElementById('resetZoneBtn').addEventListener('click', async () => {
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(zone) });
   const fb = document.getElementById('zoneFeedback');
   fb.style.color = '#0af'; fb.textContent = '↺ Zone reset to full frame';
+
+  // resume after short stabilization window
+  setTimeout(() => {
+    snapshotPaused = false;
+  }, 500);
+
   setTimeout(() => fb.textContent = '', 3000);
 });
 
@@ -454,9 +470,15 @@ document.getElementById('resetZoneBtn').addEventListener('click', async () => {
 const alertBtn = document.getElementById('alertBtn');
 
 alertBtn.addEventListener('click', async () => {
+  snapshotPaused = true;   // 👈 pause stream updates
   const res  = await fetch('/toggle_alerts', { method: 'POST' });
   const data = await res.json();
   updateAlertBtn(data.alerts_enabled);
+  // resume after short stabilization window
+  setTimeout(() => {
+    snapshotPaused = false;
+  }, 500);
+
 });
 
 function updateAlertBtn(enabled) {
@@ -540,6 +562,9 @@ loadSettings();
 document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
   const fb = document.getElementById('settingsFeedback');
   fb.style.color = '#888'; fb.textContent = 'Saving…';
+
+  snapshotPaused = true;   // 👈 pause stream updates
+
   const payload = {
     threshold:          parseInt(document.getElementById('thresholdRange').value),
     min_area:           parseInt(document.getElementById('minAreaRange').value),
@@ -558,6 +583,12 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
       fb.style.color = '#f44'; fb.textContent = 'Error — ' + errMsgs;
     }
   } catch { fb.style.color = '#f44'; fb.textContent = 'Network error'; }
+  
+  // resume after short stabilization window
+  setTimeout(() => {
+    snapshotPaused = false;
+  }, 500);
+
   setTimeout(() => fb.textContent = '', 3000);
 });
 
