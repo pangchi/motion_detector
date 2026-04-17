@@ -122,11 +122,12 @@
   <!-- Video + canvas overlay -->
   <div class="panel video-panel">
     <div class="video-wrapper" id="videoWrapper">
-      <img id="stream" 
+      <!--<img id="stream" 
         src="/video_feed" 
         alt="Live feed"
         style="display: block; max-width: 100%; border-radius: 4px; image-rendering: -webkit-optimize-contrast;"
-        crossorigin="anonymous">
+        crossorigin="anonymous">-->
+      <img id="stream">
       <canvas id="zoneCanvas"></canvas>
     </div>
     <p class="hint" style="margin-top:8px;">
@@ -160,10 +161,10 @@
     <div class="field-group">
       <div class="field-label">Recording Duration (s)</div>
       <div class="range-row">
-        <input type="range" id="durationRange" min="5" max="600" step="5" value="30">
+        <input type="range" id="durationRange" min="5" max="300" step="5" value="30">
         <span class="range-value" id="durationVal">30s</span>
       </div>
-      <div class="field-desc">How long to record after motion is detected (5–600s).</div>
+      <div class="field-desc">How long to record after motion is detected (5–300s).</div>
     </div>
 
     <button id="saveSettingsBtn">💾 Save Settings</button>
@@ -256,6 +257,8 @@ let dragMode  = null;
 let dragStart = null;
 let origZone  = null;
 
+let isDragging = false;
+
 const HANDLE = 12;
 
 function syncCanvas() {
@@ -316,10 +319,25 @@ function hitTest(pos) {
   return 'draw';
 }
 
+const imgage = document.getElementById("stream");
+
+function refreshFrame() {
+    img.src = "/snapshot?t=" + Date.now();
+}
+
+// run continuously regardless of state
+setInterval(() => {
+    if (!isDragging) {
+        refreshFrame();
+    }
+}, 100); //10 FPS
+
+
 canvas.addEventListener('mousedown', onDown);
 canvas.addEventListener('touchstart', onDown, { passive: false });
 
 function onDown(e) {
+  isDragging = true;
   e.preventDefault();
   const pos = getEventPos(e);
   dragMode  = hitTest(pos);
@@ -361,6 +379,7 @@ function onMove(e) {
 }
 
 function onUp() {
+  isDragging = false;
   document.removeEventListener('mousemove', onMove);
   document.removeEventListener('mouseup',   onUp);
   document.removeEventListener('touchmove', onMove);
@@ -400,7 +419,9 @@ document.getElementById('saveZoneBtn').addEventListener('click', async () => {
     const res  = await fetch('/save_zone', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(zone)
-    });
+    }).then(() => {
+            imgage.src = "/snapshot?t=" + Date.now();   // ✅ FORCE REFRESH
+        });
     const data = await res.json();
     if (data.success) { fb.style.color = '#0a0'; fb.textContent = '✔ Zone saved'; }
     else              { fb.style.color = '#f44'; fb.textContent = 'Error: ' + data.error; }
@@ -560,8 +581,11 @@ setInterval(pollRecordings, 10000);
 
 // Add this near the bottom of your script, in the boot section
 img.addEventListener('error', () => {
-    console.warn('Stream image error - retrying...');
-    setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
+    //console.warn('Stream image error - retrying...');
+    //setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
+    setTimeout(() => {
+        img.src = '/snapshot?' + Date.now();
+    }, 500);
 });
 </script>
 </body>
