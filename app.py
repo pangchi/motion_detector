@@ -125,8 +125,8 @@ class MotionDetector:
         if not self.alerts_enabled and not override:
             return
         try:
-            #url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-            #requests.post(url, data={'chat_id': self.chat_id, 'text': message}, timeout=5)
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            requests.post(url, data={'chat_id': self.chat_id, 'text': message}, timeout=5)
             pass
         except Exception as e:
             print(f"Failed to send Telegram message: {e}")
@@ -175,9 +175,11 @@ class MotionDetector:
         )
 
         contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        motion_detected = any(cv2.contourArea(c) > self.min_area for c in contours)
+        for c in contours:
+            if cv2.contourArea(c) > self.min_area:
+                return True, fg_mask
 
-        return motion_detected, fg_mask
+        return False, fg_mask
 
     def record_video(self):
         if self.is_recording:
