@@ -9,6 +9,7 @@ import requests
 from datetime import datetime
 from flask import Flask, render_template, Response, jsonify, request, send_from_directory
 import numpy as np
+import platform
 
 app = Flask(__name__)
 
@@ -44,7 +45,14 @@ class MotionDetector:
         }
 
         # Camera setup
-        self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        if platform.system() == "Windows":
+            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        else:
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        
+        if not self.camera.isOpened():
+            raise RuntimeError("Camera failed to open")
+        
         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.config['camera']['width']))
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.config['camera']['height']))
         self.camera.set(cv2.CAP_PROP_FPS, int(self.config['camera']['fps']))
@@ -117,8 +125,9 @@ class MotionDetector:
         if not self.alerts_enabled and not override:
             return
         try:
-            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-            requests.post(url, data={'chat_id': self.chat_id, 'text': message}, timeout=5)
+            #url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            #requests.post(url, data={'chat_id': self.chat_id, 'text': message}, timeout=5)
+            pass
         except Exception as e:
             print(f"Failed to send Telegram message: {e}")
 
@@ -152,7 +161,7 @@ class MotionDetector:
 
     def detect_motion(self, frame):
         roi, _ = self._zone_roi(frame)
-        learning_rate = 0 if self.is_recording else 0.05
+        learning_rate = 0 if self.is_recording else 0.001
         fg_mask = self.background_subtractor.apply(roi, learningRate=learning_rate)
 
         # APPLY THRESHOLD HERE
@@ -310,6 +319,50 @@ class MotionDetector:
             # Slight increase in delay helps Safari not choke
             time.sleep(0.05)   # ~20 fps – good balance
 
+    # ------------------------------------------------------------------
+    # Generate frames for streaming with overlays and motion detection
+    # ------------------------------------------------------------------
+
+    def get_jpg_frame(self):
+        frame = self.get_frame()
+        if frame is None:
+            return None
+
+        # --- same overlays as before ---
+        motion_detected, _ = self.detect_motion(frame)
+
+        fh, fw = frame.shape[:2]
+        zx = int(self.motion_zone['x'] * fw)
+        zy = int(self.motion_zone['y'] * fh)
+        zw = int(self.motion_zone['w'] * fw)
+        zh = int(self.motion_zone['h'] * fh)
+
+        cv2.rectangle(frame, (zx, zy), (zx + zw, zy + zh), (255, 165, 0), 2)
+
+        status = "RECORDING" if self.is_recording else "MONITORING"
+        color = (0, 0, 255) if self.is_recording else (0, 255, 0)
+        cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+        if motion_detected:
+            cv2.putText(frame, "MOTION DETECTED", (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        alert_text = "ALERTS: ON" if self.alerts_enabled else "ALERTS: OFF"
+        alert_color = (0, 255, 100) if self.alerts_enabled else (0, 100, 255)
+        cv2.putText(frame, alert_text, (10, fh - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, alert_color, 2)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cv2.putText(frame, timestamp, (10, fh - 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        # Encode JPEG
+        ret, buffer = cv2.imencode('.jpg', frame, [
+            int(cv2.IMWRITE_JPEG_QUALITY), 70
+        ])
+
+        return buffer.tobytes() if ret else None
+
 # Initialize
 detector = MotionDetector()
 
@@ -332,6 +385,18 @@ def video_feed():
             'Expires': '0'
         }
     )
+
+@app.route('/snapshot')
+def snapshot():
+    frame = detector.get_jpg_frame()
+    if frame is None:
+        return "No frame", 500
+
+    return Response(frame, mimetype='image/jpeg', headers={
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+    })
 
 @app.route('/status')
 def status():
@@ -427,8 +492,8 @@ def update_settings():
     if 'recording_duration' in data:
         try:
             val = int(data['recording_duration'])
-            if not (5 <= val <= 600):
-                raise ValueError("Must be between 5 and 600 seconds")
+            if not (5 <= val <= 300):
+                raise ValueError("Must be between 5 and 300 seconds")
             detector.recording_duration = val
             detector._ensure_section('motion')
             detector.config.set('motion', 'recording_duration', str(val))
