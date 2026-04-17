@@ -165,10 +165,14 @@ class MotionDetector:
         fg_mask = self.background_subtractor.apply(roi, learningRate=learning_rate)
 
         # APPLY THRESHOLD HERE
-        _, fg_mask = cv2.threshold(fg_mask, self.threshold, 255, cv2.THRESH_BINARY)
+        _, fg_mask = cv2.threshold(fg_mask, max(80, self.threshold), 255, cv2.THRESH_BINARY)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
+        fg_mask = cv2.morphologyEx(
+            fg_mask,
+            cv2.MORPH_OPEN,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        )
 
         contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         motion_detected = any(cv2.contourArea(c) > self.min_area for c in contours)
