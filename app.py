@@ -427,8 +427,8 @@ def update_settings():
     if 'recording_duration' in data:
         try:
             val = int(data['recording_duration'])
-            if not (5 <= val <= 300):
-                raise ValueError("Must be between 5 and 300 seconds")
+            if not (5 <= val <= 600):
+                raise ValueError("Must be between 5 and 600 seconds")
             detector.recording_duration = val
             detector._ensure_section('motion')
             detector.config.set('motion', 'recording_duration', str(val))
