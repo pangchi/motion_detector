@@ -322,7 +322,15 @@ function hitTest(pos) {
 const imgage = document.getElementById("stream");
 
 function refreshFrame() {
-    img.src = "/snapshot?t=" + Date.now();
+    const newImg = new Image();
+    newImg.onload = () => {
+        img.src = newImg.src;
+    };
+    newImg.onerror = () => {
+        console.warn('Snapshot failed, retrying...');
+        setTimeout(refreshFrame, 2000);
+    };
+    newImg.src = "/snapshot?t=" + Date.now();
 }
 
 // run continuously regardless of state
