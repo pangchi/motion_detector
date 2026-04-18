@@ -161,7 +161,7 @@ class MotionDetector:
 
     def detect_motion(self, frame):
         roi, _ = self._zone_roi(frame)
-        learning_rate = 0 if self.is_recording else 0.001
+        learning_rate = 0 if self.is_recording else 0.05
         fg_mask = self.background_subtractor.apply(roi, learningRate=learning_rate)
 
         # APPLY THRESHOLD HERE
