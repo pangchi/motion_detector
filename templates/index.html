@@ -122,12 +122,11 @@
   <!-- Video + canvas overlay -->
   <div class="panel video-panel">
     <div class="video-wrapper" id="videoWrapper">
-      <!--<img id="stream" 
+      <img id="stream" 
         src="/video_feed" 
         alt="Live feed"
         style="display: block; max-width: 100%; border-radius: 4px; image-rendering: -webkit-optimize-contrast;"
-        crossorigin="anonymous">-->
-      <img id="stream">
+        crossorigin="anonymous">
       <canvas id="zoneCanvas"></canvas>
     </div>
     <p class="hint" style="margin-top:8px;">
@@ -161,10 +160,10 @@
     <div class="field-group">
       <div class="field-label">Recording Duration (s)</div>
       <div class="range-row">
-        <input type="range" id="durationRange" min="5" max="300" step="5" value="30">
+        <input type="range" id="durationRange" min="5" max="600" step="5" value="30">
         <span class="range-value" id="durationVal">30s</span>
       </div>
-      <div class="field-desc">How long to record after motion is detected (5–300s).</div>
+      <div class="field-desc">How long to record after motion is detected (5–600s).</div>
     </div>
 
     <button id="saveSettingsBtn">💾 Save Settings</button>
@@ -257,9 +256,6 @@ let dragMode  = null;
 let dragStart = null;
 let origZone  = null;
 
-let isDragging = false;
-let snapshotPaused = false;
-
 const HANDLE = 12;
 
 function syncCanvas() {
@@ -320,32 +316,10 @@ function hitTest(pos) {
   return 'draw';
 }
 
-const imgage = document.getElementById("stream");
-
-function refreshFrame() {
-    const newImg = new Image();
-    newImg.onload = () => {
-        img.src = newImg.src;
-    };
-    newImg.onerror = () => {
-        console.warn('Snapshot failed, retrying...');
-        setTimeout(refreshFrame, 2000);
-    };
-    newImg.src = "/snapshot?t=" + Date.now();
-}
-
-// run continuously regardless of state
-setInterval(() => {
-  if (snapshotPaused || isDragging || document.hidden) return;  
-  refreshFrame();
-}, 200); //5 FPS
-
-
 canvas.addEventListener('mousedown', onDown);
 canvas.addEventListener('touchstart', onDown, { passive: false });
 
 function onDown(e) {
-  isDragging = true;
   e.preventDefault();
   const pos = getEventPos(e);
   dragMode  = hitTest(pos);
@@ -387,7 +361,6 @@ function onMove(e) {
 }
 
 function onUp() {
-  isDragging = false;
   document.removeEventListener('mousemove', onMove);
   document.removeEventListener('mouseup',   onUp);
   document.removeEventListener('touchmove', onMove);
@@ -423,31 +396,19 @@ setTimeout(syncCanvas, 200);
 document.getElementById('saveZoneBtn').addEventListener('click', async () => {
   const fb = document.getElementById('zoneFeedback');
   fb.style.color = '#888'; fb.textContent = 'Saving…';
-  snapshotPaused = true;   // 👈 pause stream updates
-  
   try {
     const res  = await fetch('/save_zone', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(zone)
     });
-            imgage.src = "/snapshot?t=" + Date.now();   // ✅ FORCE REFRESH
-    
     const data = await res.json();
     if (data.success) { fb.style.color = '#0a0'; fb.textContent = '✔ Zone saved'; }
     else              { fb.style.color = '#f44'; fb.textContent = 'Error: ' + data.error; }
   } catch { fb.style.color = '#f44'; fb.textContent = 'Network error'; }
-
-  // resume after short stabilization window
-  setTimeout(() => {
-    snapshotPaused = false;
-  }, 500);
-
   setTimeout(() => fb.textContent = '', 3000);
 });
 
 document.getElementById('resetZoneBtn').addEventListener('click', async () => {
-  snapshotPaused = true;   // 👈 pause stream updates
-  
   zone = { x: 0, y: 0, w: 1, h: 1 };
   pZone = normToPixel(zone);
   drawZone();
@@ -455,12 +416,6 @@ document.getElementById('resetZoneBtn').addEventListener('click', async () => {
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(zone) });
   const fb = document.getElementById('zoneFeedback');
   fb.style.color = '#0af'; fb.textContent = '↺ Zone reset to full frame';
-
-  // resume after short stabilization window
-  setTimeout(() => {
-    snapshotPaused = false;
-  }, 500);
-
   setTimeout(() => fb.textContent = '', 3000);
 });
 
@@ -470,15 +425,9 @@ document.getElementById('resetZoneBtn').addEventListener('click', async () => {
 const alertBtn = document.getElementById('alertBtn');
 
 alertBtn.addEventListener('click', async () => {
-  snapshotPaused = true;   // 👈 pause stream updates
   const res  = await fetch('/toggle_alerts', { method: 'POST' });
   const data = await res.json();
   updateAlertBtn(data.alerts_enabled);
-  // resume after short stabilization window
-  setTimeout(() => {
-    snapshotPaused = false;
-  }, 500);
-
 });
 
 function updateAlertBtn(enabled) {
@@ -562,9 +511,6 @@ loadSettings();
 document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
   const fb = document.getElementById('settingsFeedback');
   fb.style.color = '#888'; fb.textContent = 'Saving…';
-
-  snapshotPaused = true;   // 👈 pause stream updates
-
   const payload = {
     threshold:          parseInt(document.getElementById('thresholdRange').value),
     min_area:           parseInt(document.getElementById('minAreaRange').value),
@@ -583,12 +529,6 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
       fb.style.color = '#f44'; fb.textContent = 'Error — ' + errMsgs;
     }
   } catch { fb.style.color = '#f44'; fb.textContent = 'Network error'; }
-  
-  // resume after short stabilization window
-  setTimeout(() => {
-    snapshotPaused = false;
-  }, 500);
-
   setTimeout(() => fb.textContent = '', 3000);
 });
 
@@ -620,11 +560,8 @@ setInterval(pollRecordings, 10000);
 
 // Add this near the bottom of your script, in the boot section
 img.addEventListener('error', () => {
-    //console.warn('Stream image error - retrying...');
-    //setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
-    setTimeout(() => {
-        img.src = '/snapshot?' + Date.now();
-    }, 500);
+    console.warn('Stream image error - retrying...');
+    setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
 });
 </script>
 </body>
