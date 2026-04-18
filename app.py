@@ -43,6 +43,7 @@ class MotionDetector:
             'w': float(self.config.get('motion', 'zone_w', fallback='1.0')),
             'h': float(self.config.get('motion', 'zone_h', fallback='1.0')),
         }
+        self.rotation = int(self.config.get('camera', 'rotation', fallback='0'))
 
         # Camera setup
         if platform.system() == "Windows":
@@ -56,9 +57,12 @@ class MotionDetector:
         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.config['camera']['width']))
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.config['camera']['height']))
         self.camera.set(cv2.CAP_PROP_FPS, int(self.config['camera']['fps']))
-        
+
         self.frame_width  = int(self.config['camera']['width'])
         self.frame_height = int(self.config['camera']['height'])
+        
+        if self.rotation in (90, 270):
+            self.frame_width, self.frame_height = self.frame_height, self.frame_width
 
         # Motion detection variables
         self.background_subtractor = cv2.createBackgroundSubtractorMOG2()
@@ -141,9 +145,20 @@ class MotionDetector:
     # Camera / motion
     # ------------------------------------------------------------------
 
+    def _rotate_frame(self, frame):
+        if self.rotation == 90:
+            return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        elif self.rotation == 180:
+            return cv2.rotate(frame, cv2.ROTATE_180)
+        elif self.rotation == 270:
+            return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        return frame
+    
     def get_frame(self):
         ret, frame = self.camera.read()
-        return frame if ret else None
+        if not ret:
+            return None
+        return self._rotate_frame(frame)
 
     def _zone_roi(self, frame):
         """Crop frame to the current motion zone."""
@@ -191,7 +206,7 @@ class MotionDetector:
         fps = int(self.config['camera']['fps'])
         width = int(self.config['camera']['width'])
         height = int(self.config['camera']['height'])
-        out = cv2.VideoWriter(filename, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(filename, fourcc, fps, (self.frame_width, self.frame_height))
         start_time = time.time()
         print(f"Recording started: {filename}")
         try:
@@ -201,7 +216,7 @@ class MotionDetector:
                 if frame is not None:
                     # Burn timestamp into recorded file            <-- ADD THIS
                     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    cv2.putText(frame, ts, (10, height - 40),
+                    cv2.putText(frame, ts, (10, self.frame_height - 40),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     out.write(frame)
                 elapsed = time.time() - t0
@@ -514,6 +529,27 @@ def update_settings():
         return jsonify({'success': False, 'errors': errors, 'updated': updated}), 400
     return jsonify({'success': True, 'updated': updated})
 
+@app.route('/set_rotation', methods=['POST'])
+def set_rotation():
+    data = request.get_json()
+    try:
+        val = int(data['rotation'])
+        if val not in (0, 90, 180, 270):
+            raise ValueError("Must be 0, 90, 180, or 270")
+        detector.rotation = val
+        detector._ensure_section('camera')
+        detector.config.set('camera', 'rotation', str(val))
+        detector.save_config()
+        # Update logical frame dimensions
+        base_w = int(detector.config['camera']['width'])
+        base_h = int(detector.config['camera']['height'])
+        if val in (90, 270):
+            detector.frame_width, detector.frame_height = base_h, base_w
+        else:
+            detector.frame_width, detector.frame_height = base_w, base_h
+        return jsonify({'success': True, 'rotation': val})
+    except (KeyError, ValueError, TypeError) as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/settings')
 def get_settings():
@@ -522,6 +558,7 @@ def get_settings():
         'threshold': detector.threshold,
         'min_area': detector.min_area,
         'recording_duration': detector.recording_duration,
+        'rotation': detector.rotation,
     })
 
 @app.route('/network_info')
