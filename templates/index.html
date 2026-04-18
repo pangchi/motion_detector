@@ -9,11 +9,9 @@
   body { background: #111; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 16px; }
   h1 { font-size: 1.2rem; color: #0af; margin-bottom: 12px; }
 
-  /* ---- layout ---- */
   .layout { display: flex; gap: 16px; flex-wrap: wrap; }
   .panel { background: #1c1c1c; border: 1px solid #333; border-radius: 8px; padding: 14px; }
 
-  /* ---- video panel ---- */
   .video-panel { flex: 1 1 600px; }
   .video-wrapper {
     position: relative;
@@ -30,7 +28,6 @@
     border-radius: 4px;
   }
 
-  /* ---- controls panel ---- */
   .controls-panel { flex: 0 0 220px; display: flex; flex-direction: column; gap: 12px; }
 
   .stat-box { background: #111; border-radius: 6px; padding: 10px 12px; }
@@ -48,10 +45,10 @@
 
   #saveZoneBtn { background: #0af; color: #111; }
   #resetZoneBtn { background: #444; color: #eee; }
+  #rotateBtn { background: #444; color: #eee; }
 
   .hint { font-size: 0.72rem; color: #666; line-height: 1.4; }
 
-  /* ---- recordings table ---- */
   .recordings-panel { width: 100%; }
   table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   th { text-align: left; padding: 6px 8px; color: #888; border-bottom: 1px solid #333; }
@@ -59,7 +56,6 @@
   tr:last-child td { border-bottom: none; }
   .empty { color: #555; font-size: 0.82rem; padding: 8px 0; }
 
-  /* ---- settings panel ---- */
   .settings-panel { flex: 0 0 220px; display: flex; flex-direction: column; gap: 12px; }
 
   .field-group { display: flex; flex-direction: column; gap: 4px; }
@@ -89,8 +85,6 @@
 
   #saveSettingsBtn { background: #0af; color: #111; }
   #settingsFeedback { min-height: 1.2em; }
-
-  /* ---- network panel ---- */
 
   .net-row { display: flex; flex-direction: column; gap: 6px; }
   .net-pill {
@@ -122,8 +116,8 @@
   <!-- Video + canvas overlay -->
   <div class="panel video-panel">
     <div class="video-wrapper" id="videoWrapper">
-      <img id="stream" 
-        src="/video_feed" 
+      <img id="stream"
+        src="/video_feed"
         alt="Live feed"
         style="display: block; max-width: 100%; border-radius: 4px; image-rendering: -webkit-optimize-contrast;"
         crossorigin="anonymous">
@@ -174,6 +168,9 @@
     <h2 style="font-size:.9rem;color:#888;margin-bottom:4px;">Motion Zone</h2>
     <button id="saveZoneBtn">💾 Save Zone</button>
     <button id="resetZoneBtn">↺ Reset Zone</button>
+
+    <hr class="divider">
+    <button id="rotateBtn">🔄 Rotate: 0°</button>
     <div id="zoneFeedback" class="hint"></div>
   </div>
 
@@ -214,8 +211,7 @@
     </div>
 
     <button id="alertBtn">🔔 Alerts: ON</button>
-      <hr class="divider">
-
+    <hr class="divider">
     <button onclick="location.href='/telegram'">⚙️ Telegram Settings</button>
 
   </div>
@@ -227,13 +223,13 @@
     <h2 style="font-size:.9rem;color:#888;margin-bottom:8px;">Recent Recordings</h2>
     <table>
       <thead>
-      <tr>
-        <th>File</th>
-        <th>Size</th>
-        <th>Created</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
+        <tr>
+          <th>File</th>
+          <th>Size</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
       <tbody id="recTable"></tbody>
     </table>
   </div>
@@ -420,6 +416,53 @@ document.getElementById('resetZoneBtn').addEventListener('click', async () => {
 });
 
 // -----------------------------------------------------------------------
+// Camera rotation
+// -----------------------------------------------------------------------
+const ROTATIONS = [0, 90, 180, 270];
+let rotIndex = 0;
+
+document.getElementById('rotateBtn').addEventListener('click', async () => {
+  rotIndex = (rotIndex + 1) % ROTATIONS.length;
+  const deg = ROTATIONS[rotIndex];
+  const fb = document.getElementById('zoneFeedback');
+  fb.style.color = '#888'; fb.textContent = 'Applying rotation…';
+  try {
+    const res = await fetch('/set_rotation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rotation: deg }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('rotateBtn').textContent = `🔄 Rotate: ${deg}°`;
+      fb.style.color = '#0a0'; fb.textContent = `✔ Rotation set to ${deg}°`;
+      // Force stream img to reload so canvas resizes to new dimensions
+      img.src = '/video_feed?' + Date.now();
+    } else {
+      rotIndex = (rotIndex + ROTATIONS.length - 1) % ROTATIONS.length; // roll back
+      fb.style.color = '#f44'; fb.textContent = 'Error: ' + data.error;
+    }
+  } catch {
+    rotIndex = (rotIndex + ROTATIONS.length - 1) % ROTATIONS.length; // roll back
+    fb.style.color = '#f44'; fb.textContent = 'Network error';
+  }
+  setTimeout(() => fb.textContent = '', 3000);
+});
+
+// Sync rotateBtn label with server rotation on page load
+async function loadRotation() {
+  try {
+    const res  = await fetch('/settings');
+    const data = await res.json();
+    if (data.rotation !== undefined) {
+      const idx = ROTATIONS.indexOf(data.rotation);
+      if (idx !== -1) rotIndex = idx;
+      document.getElementById('rotateBtn').textContent = `🔄 Rotate: ${data.rotation}°`;
+    }
+  } catch(e) {}
+}
+
+// -----------------------------------------------------------------------
 // Alerts toggle
 // -----------------------------------------------------------------------
 const alertBtn = document.getElementById('alertBtn');
@@ -462,7 +505,7 @@ async function pollRecordings() {
     const recs = await res.json();
     const tbody = document.getElementById('recTable');
     if (recs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="empty">No recordings yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">No recordings yet</td></tr>';
     } else {
       tbody.innerHTML = recs.slice(0, 20).map(r =>
         `<tr>
@@ -503,6 +546,11 @@ async function loadSettings() {
     document.getElementById('thresholdVal').textContent = data.threshold;
     document.getElementById('minAreaVal').textContent   = data.min_area;
     document.getElementById('durationVal').textContent  = data.recording_duration + 's';
+    if (data.rotation !== undefined) {
+      const idx = ROTATIONS.indexOf(data.rotation);
+      if (idx !== -1) rotIndex = idx;
+      document.getElementById('rotateBtn').textContent = `🔄 Rotate: ${data.rotation}°`;
+    }
   } catch(e) { console.warn('Could not load settings:', e); }
 }
 
@@ -549,7 +597,6 @@ async function loadNetworkInfo() {
 
 loadNetworkInfo();
 
-
 // -----------------------------------------------------------------------
 // Boot
 // -----------------------------------------------------------------------
@@ -558,10 +605,9 @@ pollRecordings();
 setInterval(pollStatus,     2000);
 setInterval(pollRecordings, 10000);
 
-// Add this near the bottom of your script, in the boot section
 img.addEventListener('error', () => {
-    console.warn('Stream image error - retrying...');
-    setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
+  console.warn('Stream image error - retrying...');
+  setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
 });
 </script>
 </body>
