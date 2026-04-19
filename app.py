@@ -48,6 +48,8 @@ class MotionDetector:
         # Camera setup
         if platform.system() == "Windows":
             self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        elif platform.system() == "Darwin":
+            self.camera = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
         else:
             self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
         
@@ -646,5 +648,18 @@ def download_recording(filename):
     except:
         return "Invalid file", 400
 
+def find_free_port(start=5000, end=5100):
+    for port in range(start, end):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('', port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError("No free port found in range 5000–5100")
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    port = find_free_port()
+    if port != 5000:
+        print(f"Port 5000 in use, using port {port} instead")
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
