@@ -25,7 +25,7 @@ class MotionDetector:
         # Configuration
         self.bot_token = self.config['telegram']['bot_token']
         self.chat_id = self.config['telegram']['chat_id']
-        self.recordings_path = self.config['storage']['recordings_path']
+        self.recordings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.config['storage']['recordings_path'])
         self.max_usage = int(self.config['storage']['max_usage_percent'])
         self.recording_duration = int(self.config['motion']['recording_duration'])
         self.threshold = int(self.config['motion']['threshold'])
@@ -627,7 +627,7 @@ def test_telegram():
 def telegram_page():
     return render_template('telegram.html')
 
-RECORDINGS_DIR = os.path.abspath("recordings")
+RECORDINGS_DIR = detector.recordings_path
 
 def safe_path(filename):
     path = os.path.abspath(os.path.join(RECORDINGS_DIR, filename))
