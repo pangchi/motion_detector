@@ -44,24 +44,9 @@ class MotionDetector:
         }
         self.rotation = int(self.config.get('camera', 'rotation', fallback='0'))
 
-        # Camera setup
-        if platform.system() == "Windows":
-            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        elif platform.system() == "Darwin":
-            self.camera = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
-        else:
-            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
-        
-        if not self.camera.isOpened():
-            raise RuntimeError("Camera failed to open")
-        
-        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.config['camera']['width']))
-        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.config['camera']['height']))
-        self.camera.set(cv2.CAP_PROP_FPS, int(self.config['camera']['fps']))
-
         self.frame_width  = int(self.config['camera']['width'])
         self.frame_height = int(self.config['camera']['height'])
-        
+
         if self.rotation in (90, 270):
             self.frame_width, self.frame_height = self.frame_height, self.frame_width
 
@@ -69,12 +54,67 @@ class MotionDetector:
         self.background_subtractor = cv2.createBackgroundSubtractorMOG2()
         self.is_recording = False
         self.last_motion_time = 0
-        
+
+        # Runtime port (set by __main__ after find_free_port())
+        self.port = None
+
+        # Camera state
+        self.camera = None
+        self.camera_ready = False
+        self._open_camera()  # attempt initial open; sets camera_ready
+
         os.makedirs(self.recordings_path, exist_ok=True)
         
         self.start_motion_detection()
         self.start_storage_monitor()
-        self.send_startup_message()
+
+    # ------------------------------------------------------------------
+    # Camera open / watchdog
+    # ------------------------------------------------------------------
+
+    def _open_camera(self):
+        """Try to open the camera. Returns True on success."""
+        cap = None
+        if platform.system() == "Windows":
+            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        elif platform.system() == "Darwin":
+            cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
+        else:
+            cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+
+        if cap and cap.isOpened():
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.config['camera']['width']))
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.config['camera']['height']))
+            cap.set(cv2.CAP_PROP_FPS, int(self.config['camera']['fps']))
+            if self.camera is not None:
+                self.camera.release()
+            self.camera = cap
+            self.camera_ready = True
+            return True
+        else:
+            if cap:
+                cap.release()
+            self.camera_ready = False
+            return False
+
+    def _start_camera_watchdog(self):
+        """Poll every 5 s until a camera becomes available, then send a restored alert."""
+        def watchdog():
+            ip = self.get_local_ip()
+            print("Camera watchdog started – polling for camera…")
+            while not self.camera_ready:
+                time.sleep(5)
+                if self._open_camera():
+                    print("Camera reconnected.")
+                    port = self.port or 5000
+                    self.send_telegram_message(
+                        f"✅ Camera reconnected!\n"
+                        f"Host: {self.get_hostname()}\n"
+                        f"IP: {ip}\n"
+                        f"Web Interface: http://{ip}:{port}",
+                        override=True
+                    )
+        threading.Thread(target=watchdog, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Config persistence helpers
@@ -138,8 +178,25 @@ class MotionDetector:
     def send_startup_message(self):
         host = self.get_hostname()
         ip = self.get_local_ip()
-        message = f"🎥 Motion Detector Started\nHost: {host}\nWeb Interface: http://{ip}:5000"
-        self.send_telegram_message(message, override=True)
+        port = self.port or 5000
+        if self.camera_ready:
+            message = (
+                f"🎥 Motion Detector Started\n"
+                f"Host: {host}\n"
+                f"IP: {ip}\n"
+                f"Web Interface: http://{ip}:{port}"
+            )
+            self.send_telegram_message(message, override=True)
+        else:
+            message = (
+                f"⚠️ Motion Detector Started — NO CAMERA DETECTED\n"
+                f"Host: {host}\n"
+                f"IP: {ip}\n"
+                f"Web Interface: http://{ip}:{port}\n"
+                f"Waiting for camera to be connected…"
+            )
+            self.send_telegram_message(message, override=True)
+            self._start_camera_watchdog()
 
     # ------------------------------------------------------------------
     # Camera / motion
@@ -155,6 +212,8 @@ class MotionDetector:
         return frame
     
     def get_frame(self):
+        if not self.camera_ready or self.camera is None:
+            return None
         ret, frame = self.camera.read()
         if not ret:
             return None
@@ -221,6 +280,9 @@ class MotionDetector:
     def start_motion_detection(self):
         def motion_loop():
             while True:
+                if not self.camera_ready:
+                    time.sleep(1)
+                    continue
                 frame = self.get_frame()
                 if frame is not None:
                     motion_detected, _ = self.detect_motion(frame)
@@ -444,6 +506,7 @@ def status():
         'recordings_count': len([f for f in os.listdir(detector.recordings_path) if f.endswith('.mp4')]),
         'alerts_enabled': detector.alerts_enabled,
         'motion_zone': detector.motion_zone,
+        'camera_ready': detector.camera_ready,
     })
 
 @app.route('/settings')
@@ -853,4 +916,6 @@ if __name__ == '__main__':
     port = find_free_port()
     if port != 5000:
         print(f"Port 5000 in use, using port {port} instead")
+    detector.port = port
+    detector.send_startup_message()
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
