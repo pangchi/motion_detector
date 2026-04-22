@@ -105,6 +105,94 @@
   }
 
   hr.divider { border: none; border-top: 1px solid #2a2a2a; margin: 2px 0; }
+
+  /* ── Inline player ── */
+  #player-section {
+    display: none;
+    background: #111;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+  #player-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .nav-btn {
+    width: auto;
+    padding: 4px 14px;
+    font-size: 1.2rem;
+    line-height: 1;
+    background: #2a2a2a;
+    color: #eee;
+    border-radius: 5px;
+    border: 1px solid #444;
+  }
+  .nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .nav-btn:not(:disabled):hover { background: #3a3a3a; opacity: 1; }
+  #nav-counter {
+    flex: 1;
+    text-align: center;
+    font-size: 0.78rem;
+    color: #666;
+  }
+  #recording-player {
+    display: block;
+    width: 100%;
+    border-radius: 4px;
+    background: #000;
+  }
+  .player-meta {
+    font-size: 0.72rem;
+    color: #666;
+    margin: 6px 0 8px;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .player-meta span { color: #0af; }
+  .player-actions { display: flex; gap: 8px; }
+  .inline-btn {
+    width: auto;
+    padding: 6px 16px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    border-radius: 5px;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+    display: inline-block;
+  }
+  .inline-btn-primary   { background: #0af; color: #111; }
+  .inline-btn-secondary { background: #333; color: #eee; }
+  .inline-btn:active { opacity: 0.75; }
+
+  /* ── Pagination bar ── */
+  .pg-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 0.8rem;
+    color: #666;
+  }
+  .pg-bar button {
+    width: auto;
+    padding: 4px 12px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: #2a2a2a;
+    color: #aaa;
+    border-radius: 5px;
+    border: 1px solid #444;
+  }
+  .pg-bar button:disabled { opacity: 0.3; cursor: not-allowed; }
+  .pg-info { flex: 1; text-align: center; }
+
+  /* active row highlight */
+  #recTable tr.active-row td { background: rgba(0,170,255,0.07); }
 </style>
 </head>
 <body>
@@ -216,14 +304,43 @@
 
   </div>
 
-  <hr class="divider">
-
   <!-- Recordings list -->
   <div class="panel recordings-panel">
     <h2 style="font-size:.9rem;color:#888;margin-bottom:8px;">Recent Recordings</h2>
+
+    <!-- Inline player -->
+    <div id="player-section">
+      <div id="player-nav">
+        <button class="nav-btn" id="btn-prev" title="Older recording" disabled>&#8249;</button>
+        <span id="nav-counter">— / —</span>
+        <button class="nav-btn" id="btn-next" title="Newer recording" disabled>&#8250;</button>
+        <button class="inline-btn inline-btn-secondary" id="btn-close" style="margin-left:auto;">✕ Close</button>
+      </div>
+
+      <video id="recording-player" controls playsinline></video>
+
+      <div class="player-meta">
+        <div>File: <span id="pmFilename">—</span></div>
+        <div>Created: <span id="pmCreated">—</span></div>
+        <div>Size: <span id="pmSize">—</span></div>
+      </div>
+
+      <div class="player-actions">
+        <button class="inline-btn inline-btn-primary" id="btn-download" onclick="triggerDownload()">⬇ Download</button>
+      </div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pg-bar">
+      <button id="pg-prev" onclick="changePage(-1)">‹ Newer</button>
+      <span class="pg-info" id="pg-info">Loading…</span>
+      <button id="pg-next" onclick="changePage(1)">Older ›</button>
+    </div>
+
     <table>
       <thead>
         <tr>
+          <th>#</th>
           <th>File</th>
           <th>Size</th>
           <th>Created</th>
@@ -243,15 +360,10 @@
 const img     = document.getElementById('stream');
 const canvas  = document.getElementById('zoneCanvas');
 const ctx     = canvas.getContext('2d');
-const wrapper = document.getElementById('videoWrapper');
 
 let zone  = { x: 0, y: 0, w: 1, h: 1 };
 let pZone = { x: 0, y: 0, w: 0, h: 0 };
-
-let dragMode  = null;
-let dragStart = null;
-let origZone  = null;
-
+let dragMode = null, dragStart = null, origZone = null;
 const HANDLE = 12;
 
 function syncCanvas() {
@@ -260,26 +372,17 @@ function syncCanvas() {
   pZone = normToPixel(zone);
   drawZone();
 }
-
 function normToPixel(z) {
   return { x: z.x * canvas.width, y: z.y * canvas.height,
            w: z.w * canvas.width, h: z.h * canvas.height };
 }
-
-function pixelToNorm(p) {
-  return { x: p.x / canvas.width, y: p.y / canvas.height,
-           w: p.w / canvas.width, h: p.h / canvas.height };
-}
-
 function clampZone(z) {
   let { x, y, w, h } = z;
-  w = Math.max(0.02, w);
-  h = Math.max(0.02, h);
+  w = Math.max(0.02, w); h = Math.max(0.02, h);
   x = Math.max(0, Math.min(x, 1 - w));
   y = Math.max(0, Math.min(y, 1 - h));
   return { x, y, w, h };
 }
-
 function drawZone() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const { x, y, w, h } = pZone;
@@ -296,14 +399,14 @@ function drawZone() {
   ctx.fillText('Motion Zone', x + 4, y + 14);
   ctx.fillRect(x + w - HANDLE, y + h - HANDLE, HANDLE, HANDLE);
 }
-
 function getEventPos(e) {
   const rect    = canvas.getBoundingClientRect();
   const clientX = e.touches ? e.touches[0].clientX : e.clientX;
   const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-  return { x: clientX - rect.left, y: clientY - rect.top };
+  const scaleX  = canvas.width  / rect.width;
+  const scaleY  = canvas.height / rect.height;
+  return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
 }
-
 function hitTest(pos) {
   const { x, y, w, h } = pZone;
   if (pos.x >= x + w - HANDLE && pos.x <= x + w &&
@@ -311,10 +414,8 @@ function hitTest(pos) {
   if (pos.x > x && pos.x < x + w && pos.y > y && pos.y < y + h) return 'move';
   return 'draw';
 }
-
 canvas.addEventListener('mousedown', onDown);
 canvas.addEventListener('touchstart', onDown, { passive: false });
-
 function onDown(e) {
   e.preventDefault();
   const pos = getEventPos(e);
@@ -322,50 +423,41 @@ function onDown(e) {
   dragStart = pos;
   origZone  = { ...zone };
   if (dragMode === 'draw') {
-    const nx = pos.x / canvas.width;
-    const ny = pos.y / canvas.height;
-    zone = { x: nx, y: ny, w: 0.001, h: 0.001 };
+    zone = { x: pos.x / canvas.width, y: pos.y / canvas.height, w: 0.001, h: 0.001 };
   }
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup',   onUp);
   document.addEventListener('touchmove', onMove, { passive: false });
   document.addEventListener('touchend',  onUp);
 }
-
 function onMove(e) {
   e.preventDefault();
   const pos = getEventPos(e);
   const dx  = (pos.x - dragStart.x) / canvas.width;
   const dy  = (pos.y - dragStart.y) / canvas.height;
   if (dragMode === 'draw') {
-    const nx = pos.x / canvas.width;
-    const ny = pos.y / canvas.height;
-    zone.x = Math.min(origZone.x, nx);
-    zone.y = Math.min(origZone.y, ny);
-    zone.w = Math.abs(nx - origZone.x);
-    zone.h = Math.abs(ny - origZone.y);
+    const nx = pos.x / canvas.width, ny = pos.y / canvas.height;
+    zone.x = Math.min(origZone.x, nx); zone.y = Math.min(origZone.y, ny);
+    zone.w = Math.abs(nx - origZone.x); zone.h = Math.abs(ny - origZone.y);
   } else if (dragMode === 'move') {
-    zone.x = origZone.x + dx;
-    zone.y = origZone.y + dy;
+    zone.x = origZone.x + dx; zone.y = origZone.y + dy;
   } else if (dragMode === 'resize') {
-    zone.w = origZone.w + dx;
-    zone.h = origZone.h + dy;
+    zone.w = origZone.w + dx; zone.h = origZone.h + dy;
   }
-  zone  = clampZone(zone);
-  pZone = normToPixel(zone);
-  drawZone();
+  zone = clampZone(zone); pZone = normToPixel(zone); drawZone();
 }
-
 function onUp() {
   document.removeEventListener('mousemove', onMove);
   document.removeEventListener('mouseup',   onUp);
   document.removeEventListener('touchmove', onMove);
   document.removeEventListener('touchend',  onUp);
-  dragMode = null;
-  zone  = clampZone(zone);
-  pZone = normToPixel(zone);
-  drawZone();
+  dragMode = null; zone = clampZone(zone); pZone = normToPixel(zone); drawZone();
 }
+const resizeObserver = new ResizeObserver(syncCanvas);
+resizeObserver.observe(img);
+img.addEventListener('load', syncCanvas);
+window.addEventListener('resize', syncCanvas);
+setTimeout(syncCanvas, 200);
 
 // -----------------------------------------------------------------------
 // Live clock
@@ -380,12 +472,6 @@ function updateClock() {
 updateClock();
 setInterval(updateClock, 1000);
 
-const resizeObserver = new ResizeObserver(syncCanvas);
-resizeObserver.observe(img);
-img.addEventListener('load', syncCanvas);
-window.addEventListener('resize', syncCanvas);
-setTimeout(syncCanvas, 200);
-
 // -----------------------------------------------------------------------
 // Save / Reset zone
 // -----------------------------------------------------------------------
@@ -393,21 +479,16 @@ document.getElementById('saveZoneBtn').addEventListener('click', async () => {
   const fb = document.getElementById('zoneFeedback');
   fb.style.color = '#888'; fb.textContent = 'Saving…';
   try {
-    const res  = await fetch('/save_zone', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(zone)
-    });
+    const res  = await fetch('/save_zone', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(zone) });
     const data = await res.json();
     if (data.success) { fb.style.color = '#0a0'; fb.textContent = '✔ Zone saved'; }
     else              { fb.style.color = '#f44'; fb.textContent = 'Error: ' + data.error; }
   } catch { fb.style.color = '#f44'; fb.textContent = 'Network error'; }
   setTimeout(() => fb.textContent = '', 3000);
 });
-
 document.getElementById('resetZoneBtn').addEventListener('click', async () => {
-  zone = { x: 0, y: 0, w: 1, h: 1 };
-  pZone = normToPixel(zone);
-  drawZone();
+  zone = { x: 0, y: 0, w: 1, h: 1 }; pZone = normToPixel(zone); drawZone();
   await fetch('/save_zone', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(zone) });
   const fb = document.getElementById('zoneFeedback');
@@ -420,59 +501,39 @@ document.getElementById('resetZoneBtn').addEventListener('click', async () => {
 // -----------------------------------------------------------------------
 const ROTATIONS = [0, 90, 180, 270];
 let rotIndex = 0;
-
 document.getElementById('rotateBtn').addEventListener('click', async () => {
   rotIndex = (rotIndex + 1) % ROTATIONS.length;
   const deg = ROTATIONS[rotIndex];
   const fb = document.getElementById('zoneFeedback');
   fb.style.color = '#888'; fb.textContent = 'Applying rotation…';
   try {
-    const res = await fetch('/set_rotation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rotation: deg }),
-    });
+    const res  = await fetch('/set_rotation', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rotation: deg }) });
     const data = await res.json();
     if (data.success) {
       document.getElementById('rotateBtn').textContent = `🔄 Rotate: ${deg}°`;
       fb.style.color = '#0a0'; fb.textContent = `✔ Rotation set to ${deg}°`;
-      // Force stream img to reload so canvas resizes to new dimensions
       img.src = '/video_feed?' + Date.now();
     } else {
-      rotIndex = (rotIndex + ROTATIONS.length - 1) % ROTATIONS.length; // roll back
+      rotIndex = (rotIndex + ROTATIONS.length - 1) % ROTATIONS.length;
       fb.style.color = '#f44'; fb.textContent = 'Error: ' + data.error;
     }
   } catch {
-    rotIndex = (rotIndex + ROTATIONS.length - 1) % ROTATIONS.length; // roll back
+    rotIndex = (rotIndex + ROTATIONS.length - 1) % ROTATIONS.length;
     fb.style.color = '#f44'; fb.textContent = 'Network error';
   }
   setTimeout(() => fb.textContent = '', 3000);
 });
 
-// Sync rotateBtn label with server rotation on page load
-async function loadRotation() {
-  try {
-    const res  = await fetch('/settings');
-    const data = await res.json();
-    if (data.rotation !== undefined) {
-      const idx = ROTATIONS.indexOf(data.rotation);
-      if (idx !== -1) rotIndex = idx;
-      document.getElementById('rotateBtn').textContent = `🔄 Rotate: ${data.rotation}°`;
-    }
-  } catch(e) {}
-}
-
 // -----------------------------------------------------------------------
 // Alerts toggle
 // -----------------------------------------------------------------------
 const alertBtn = document.getElementById('alertBtn');
-
 alertBtn.addEventListener('click', async () => {
   const res  = await fetch('/toggle_alerts', { method: 'POST' });
   const data = await res.json();
   updateAlertBtn(data.alerts_enabled);
 });
-
 function updateAlertBtn(enabled) {
   alertBtn.textContent = enabled ? '🔔 Alerts: ON' : '🔕 Alerts: OFF';
   alertBtn.classList.toggle('off', !enabled);
@@ -491,34 +552,8 @@ async function pollStatus() {
     document.getElementById('recCount').textContent    = data.recordings_count;
     updateAlertBtn(data.alerts_enabled);
     if (!window._zoneSynced && data.motion_zone) {
-      zone  = data.motion_zone;
-      pZone = normToPixel(zone);
-      drawZone();
+      zone = data.motion_zone; pZone = normToPixel(zone); drawZone();
       window._zoneSynced = true;
-    }
-  } catch(e) {}
-}
-
-async function pollRecordings() {
-  try {
-    const res  = await fetch('/recordings');
-    const recs = await res.json();
-    const tbody = document.getElementById('recTable');
-    if (recs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">No recordings yet</td></tr>';
-    } else {
-      tbody.innerHTML = recs.slice(0, 20).map(r =>
-        `<tr>
-          <td style="font-family:monospace;font-size:.78rem;">${r.filename}</td>
-          <td>${r.size_mb} MB</td>
-          <td>${r.created}</td>
-          <td style="white-space:nowrap;">
-            <a href="/recordings/${r.filename}" target="_blank" style="color:#0af;">View</a>
-            &nbsp;|&nbsp;
-            <a href="/download/${r.filename}" style="color:#0af;">Download</a>
-          </td>
-        </tr>`
-      ).join('');
     }
   } catch(e) {}
 }
@@ -531,7 +566,6 @@ function bindRange(rangeId, displayId, formatter) {
   const display = document.getElementById(displayId);
   range.addEventListener('input', () => { display.textContent = formatter(range.value); });
 }
-
 bindRange('thresholdRange', 'thresholdVal', v => v);
 bindRange('minAreaRange',   'minAreaVal',   v => v);
 bindRange('durationRange',  'durationVal',  v => v + 's');
@@ -553,7 +587,6 @@ async function loadSettings() {
     }
   } catch(e) { console.warn('Could not load settings:', e); }
 }
-
 loadSettings();
 
 document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
@@ -565,14 +598,11 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     recording_duration: parseInt(document.getElementById('durationRange').value),
   };
   try {
-    const res  = await fetch('/update_settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const res  = await fetch('/update_settings', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
-    if (data.success) {
-      fb.style.color = '#0a0'; fb.textContent = '✔ Settings saved';
-    } else {
+    if (data.success) { fb.style.color = '#0a0'; fb.textContent = '✔ Settings saved'; }
+    else {
       const errMsgs = Object.entries(data.errors).map(([k,v]) => `${k}: ${v}`).join('; ');
       fb.style.color = '#f44'; fb.textContent = 'Error — ' + errMsgs;
     }
@@ -594,19 +624,145 @@ async function loadNetworkInfo() {
     document.getElementById('netIp').textContent       = 'n/a';
   }
 }
-
 loadNetworkInfo();
+
+// -----------------------------------------------------------------------
+// Recordings browser  — prev / next navigation
+// -----------------------------------------------------------------------
+let allRecs = [];
+let curIdx  = null;
+let curPage = 1;
+const PER_PAGE = 20;
+
+const playerSection = document.getElementById('player-section');
+const player        = document.getElementById('recording-player');
+const btnPrev       = document.getElementById('btn-prev');
+const btnNext       = document.getElementById('btn-next');
+const btnClose      = document.getElementById('btn-close');
+const btnDL         = document.getElementById('btn-download');
+const recTbody      = document.getElementById('recTable');
+const pgInfo        = document.getElementById('pg-info');
+const pgPrevBtn     = document.getElementById('pg-prev');
+const pgNextBtn     = document.getElementById('pg-next');
+
+async function loadRecordings() {
+  try {
+    const res = await fetch('/recordings');
+    allRecs = await res.json();
+    allRecs.forEach((r, i) => r.index = i);
+    renderPage();
+  } catch(e) {
+    recTbody.innerHTML = `<tr><td colspan="5" class="empty">Failed to load recordings</td></tr>`;
+  }
+}
+
+window.changePage = function(delta) {
+  const total = Math.max(1, Math.ceil(allRecs.length / PER_PAGE));
+  curPage = Math.max(1, Math.min(total, curPage + delta));
+  renderPage();
+};
+
+function renderPage() {
+  const total = Math.max(1, Math.ceil(allRecs.length / PER_PAGE));
+  pgInfo.textContent = `Page ${curPage} / ${total}  (${allRecs.length} recordings)`;
+  pgPrevBtn.disabled = curPage <= 1;
+  pgNextBtn.disabled = curPage >= total;
+
+  const start = (curPage - 1) * PER_PAGE;
+  const slice = allRecs.slice(start, start + PER_PAGE);
+
+  if (!slice.length) {
+    recTbody.innerHTML = '<tr><td colspan="5" class="empty">No recordings yet</td></tr>';
+    return;
+  }
+
+  recTbody.innerHTML = slice.map((rec, li) => {
+    const gi = start + li;
+    const activeClass = gi === curIdx ? ' class="active-row"' : '';
+    return `<tr${activeClass} onclick="openRecording(${gi})" style="cursor:pointer;">
+      <td style="color:#555;font-size:.78rem;">${gi + 1}</td>
+      <td style="font-family:monospace;font-size:.78rem;">${rec.filename}</td>
+      <td>${rec.size_mb} MB</td>
+      <td>${rec.created}</td>
+      <td style="white-space:nowrap;">
+        <button onclick="event.stopPropagation();openRecording(${gi})"
+          style="width:auto;padding:3px 10px;font-size:.75rem;background:#0af;color:#111;border-radius:4px;border:none;cursor:pointer;font-weight:600;">▶ Play</button>
+        &nbsp;<button onclick="event.stopPropagation();downloadRec('${rec.filename}')"
+          style="width:auto;padding:3px 10px;font-size:.75rem;background:#0af;color:#111;border-radius:4px;border:none;cursor:pointer;font-weight:600;">⬇ Download</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+window.openRecording = function(idx) {
+  if (idx < 0 || idx >= allRecs.length) return;
+  curIdx = idx;
+  const rec = allRecs[idx];
+
+  player.src = `/api/recordings/${rec.filename}/stream`;
+  player.load();
+  player.play().catch(() => {});
+
+  document.getElementById('pmFilename').textContent = rec.filename;
+  document.getElementById('pmCreated').textContent  = rec.created;
+  document.getElementById('pmSize').textContent     = rec.size_mb + ' MB';
+  btnDL._filename = rec.filename;
+
+  btnPrev.disabled = idx + 1 >= allRecs.length;  // ‹ = older
+  btnNext.disabled = idx - 1 < 0;                // › = newer
+  document.getElementById('nav-counter').textContent = `${idx + 1} / ${allRecs.length}`;
+
+  playerSection.style.display = 'block';
+  playerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const targetPage = Math.floor(idx / PER_PAGE) + 1;
+  if (targetPage !== curPage) curPage = targetPage;
+  renderPage();
+};
+
+btnPrev.addEventListener('click', () => { if (curIdx !== null) openRecording(curIdx + 1); });
+btnNext.addEventListener('click', () => { if (curIdx !== null) openRecording(curIdx - 1); });
+
+btnClose.addEventListener('click', () => {
+  player.pause(); player.src = '';
+  playerSection.style.display = 'none';
+  curIdx = null; renderPage();
+});
+
+// Auto-advance to next older clip on end
+player.addEventListener('ended', () => {
+  if (curIdx !== null && curIdx + 1 < allRecs.length) openRecording(curIdx + 1);
+});
+
+// Keyboard navigation while player is open
+document.addEventListener('keydown', e => {
+  if (playerSection.style.display === 'none') return;
+  if (e.key === 'ArrowLeft')  btnNext.click();  // ← = newer
+  if (e.key === 'ArrowRight') btnPrev.click();  // → = older
+  if (e.key === 'Escape')     btnClose.click();
+});
+
+function triggerDownload() {
+  if (btnDL._filename) downloadRec(btnDL._filename);
+}
+function downloadRec(filename) {
+  const a = document.createElement('a');
+  a.href = `/download/${filename}`;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
 
 // -----------------------------------------------------------------------
 // Boot
 // -----------------------------------------------------------------------
 pollStatus();
-pollRecordings();
-setInterval(pollStatus,     2000);
-setInterval(pollRecordings, 10000);
+loadRecordings();
+setInterval(pollStatus,      2000);
+setInterval(loadRecordings, 30000);
 
 img.addEventListener('error', () => {
-  console.warn('Stream image error - retrying...');
   setTimeout(() => { img.src = '/video_feed?' + Date.now(); }, 500);
 });
 </script>
