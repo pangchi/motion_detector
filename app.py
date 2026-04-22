@@ -36,7 +36,6 @@ class MotionDetector:
         self.alerts_enabled = alerts_val.strip().lower() == 'true'
 
         # Motion zone: normalised floats 0.0–1.0 (x, y, w, h)
-        # Falls back to full frame if not in config
         self.motion_zone = {
             'x': float(self.config.get('motion', 'zone_x', fallback='0.0')),
             'y': float(self.config.get('motion', 'zone_y', fallback='0.0')),
@@ -127,13 +126,12 @@ class MotionDetector:
         except:
             return "Unknown"
 
-    def send_telegram_message(self, message, override = False):
+    def send_telegram_message(self, message, override=False):
         if not self.alerts_enabled and not override:
             return
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             requests.post(url, data={'chat_id': self.chat_id, 'text': message}, timeout=5)
-            pass
         except Exception as e:
             print(f"Failed to send Telegram message: {e}")
 
@@ -169,7 +167,6 @@ class MotionDetector:
         zy = int(self.motion_zone['y'] * h)
         zw = int(self.motion_zone['w'] * w)
         zh = int(self.motion_zone['h'] * h)
-        # Clamp
         zx = max(0, min(zx, w - 1))
         zy = max(0, min(zy, h - 1))
         zw = max(1, min(zw, w - zx))
@@ -180,22 +177,17 @@ class MotionDetector:
         roi, _ = self._zone_roi(frame)
         learning_rate = 0 if self.is_recording else 0.05
         fg_mask = self.background_subtractor.apply(roi, learningRate=learning_rate)
-
-        # APPLY THRESHOLD HERE
         _, fg_mask = cv2.threshold(fg_mask, max(140, self.threshold), 255, cv2.THRESH_BINARY)
-
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         fg_mask = cv2.morphologyEx(
             fg_mask,
             cv2.MORPH_OPEN,
             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         )
-
         contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in contours:
             if cv2.contourArea(c) > self.min_area:
                 return True, fg_mask
-
         return False, fg_mask
 
     def record_video(self):
@@ -206,8 +198,6 @@ class MotionDetector:
         filename = os.path.join(self.recordings_path, f"motion_{timestamp}.mp4")
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         fps = int(self.config['camera']['fps'])
-        width = int(self.config['camera']['width'])
-        height = int(self.config['camera']['height'])
         out = cv2.VideoWriter(filename, fourcc, fps, (self.frame_width, self.frame_height))
         start_time = time.time()
         print(f"Recording started: {filename}")
@@ -216,7 +206,6 @@ class MotionDetector:
                 t0 = time.time()
                 frame = self.get_frame()
                 if frame is not None:
-                    # Burn timestamp into recorded file            <-- ADD THIS
                     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     cv2.putText(frame, ts, (10, self.frame_height - 40),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
@@ -279,6 +268,30 @@ class MotionDetector:
         threading.Thread(target=storage_loop, daemon=True).start()
 
     # ------------------------------------------------------------------
+    # Recording list helper (shared by UI + API)
+    # ------------------------------------------------------------------
+
+    def get_sorted_recordings(self):
+        """Return list of recording dicts sorted newest-first."""
+        recs = []
+        for filename in os.listdir(self.recordings_path):
+            if filename.endswith('.mp4'):
+                filepath = os.path.join(self.recordings_path, filename)
+                size = os.path.getsize(filepath)
+                created = datetime.fromtimestamp(os.path.getctime(filepath))
+                recs.append({
+                    'filename': filename,
+                    'size_mb': round(size / (1024 * 1024), 2),
+                    'created': created.strftime('%Y-%m-%d %H:%M:%S'),
+                    'created_ts': os.path.getctime(filepath),
+                })
+        recs.sort(key=lambda x: x['created_ts'], reverse=True)
+        # Remove internal sort key before returning
+        for r in recs:
+            del r['created_ts']
+        return recs
+
+    # ------------------------------------------------------------------
     # Streaming
     # ------------------------------------------------------------------
 
@@ -289,10 +302,8 @@ class MotionDetector:
                 time.sleep(0.1)
                 continue
 
-            # Motion detection + overlays (your existing code)
             motion_detected, _ = self.detect_motion(frame)
 
-            # Draw motion zone rectangle
             fh, fw = frame.shape[:2]
             zx = int(self.motion_zone['x'] * fw)
             zy = int(self.motion_zone['y'] * fh)
@@ -300,7 +311,6 @@ class MotionDetector:
             zh = int(self.motion_zone['h'] * fh)
             cv2.rectangle(frame, (zx, zy), (zx + zw, zy + zh), (255, 165, 0), 2)
 
-            # Status overlay
             status = "RECORDING" if self.is_recording else "MONITORING"
             color = (0, 0, 255) if self.is_recording else (0, 255, 0)
             cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
@@ -309,57 +319,40 @@ class MotionDetector:
                 cv2.putText(frame, "MOTION DETECTED", (10, 70),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-            # Alert status
             alert_text = "ALERTS: ON" if self.alerts_enabled else "ALERTS: OFF"
             alert_color = (0, 255, 100) if self.alerts_enabled else (0, 100, 255)
             cv2.putText(frame, alert_text, (10, fh - 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, alert_color, 2)
 
-            # Timestamp
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cv2.putText(frame, timestamp, (10, fh - 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-            # Encode to JPEG - lower quality often helps Safari stability
-            ret, buffer = cv2.imencode('.jpg', frame, [
-                int(cv2.IMWRITE_JPEG_QUALITY), 65   # Try 70-80
-            ])
-
+            ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
             if not ret:
                 time.sleep(0.05)
                 continue
 
             frame_bytes = buffer.tobytes()
-
-            # Strict formatting that Safari likes better
             yield (b'--frame\r\n'
-                b'Content-Type: image/jpeg\r\n'
-                b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n'
-                b'\r\n' +          # Important blank line
-                frame_bytes +
-                b'\r\n')
-
-            # Slight increase in delay helps Safari not choke
-            time.sleep(0.05)   # ~20 fps – good balance
-
-    # ------------------------------------------------------------------
-    # Generate frames for streaming with overlays and motion detection
-    # ------------------------------------------------------------------
+                   b'Content-Type: image/jpeg\r\n'
+                   b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n'
+                   b'\r\n' +
+                   frame_bytes +
+                   b'\r\n')
+            time.sleep(0.05)
 
     def get_jpg_frame(self):
         frame = self.get_frame()
         if frame is None:
             return None
 
-        # --- same overlays as before ---
         motion_detected, _ = self.detect_motion(frame)
-
         fh, fw = frame.shape[:2]
         zx = int(self.motion_zone['x'] * fw)
         zy = int(self.motion_zone['y'] * fh)
         zw = int(self.motion_zone['w'] * fw)
         zh = int(self.motion_zone['h'] * fh)
-
         cv2.rectangle(frame, (zx, zy), (zx + zw, zy + zh), (255, 165, 0), 2)
 
         status = "RECORDING" if self.is_recording else "MONITORING"
@@ -379,23 +372,41 @@ class MotionDetector:
         cv2.putText(frame, timestamp, (10, fh - 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        # Encode JPEG
-        ret, buffer = cv2.imencode('.jpg', frame, [
-            int(cv2.IMWRITE_JPEG_QUALITY), 70
-        ])
-
+        ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
         return buffer.tobytes() if ret else None
+
 
 # Initialize
 detector = MotionDetector()
+RECORDINGS_DIR = detector.recordings_path
 
 # ------------------------------------------------------------------
-# Routes
+# Path safety helper
 # ------------------------------------------------------------------
+
+def safe_path(filename):
+    path = os.path.abspath(os.path.join(RECORDINGS_DIR, filename))
+    if not path.startswith(os.path.abspath(RECORDINGS_DIR)):
+        raise ValueError("Invalid path")
+    return path
+
+
+# ==================================================================
+# Routes – UI pages
+# ==================================================================
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/telegram')
+def telegram_page():
+    return render_template('telegram.html')
+
+
+# ==================================================================
+# Routes – Live feed
+# ==================================================================
 
 @app.route('/video_feed')
 def video_feed():
@@ -405,7 +416,7 @@ def video_feed():
         headers={
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
-            'Expires': '0'
+            'Expires': '0',
         }
     )
 
@@ -414,12 +425,16 @@ def snapshot():
     frame = detector.get_jpg_frame()
     if frame is None:
         return "No frame", 500
-
     return Response(frame, mimetype='image/jpeg', headers={
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
-        'Expires': '0'
+        'Expires': '0',
     })
+
+
+# ==================================================================
+# Routes – Status / settings
+# ==================================================================
 
 @app.route('/status')
 def status():
@@ -431,35 +446,30 @@ def status():
         'motion_zone': detector.motion_zone,
     })
 
-@app.route('/recordings')
-def recordings():
-    recs = []
-    for filename in os.listdir(detector.recordings_path):
-        if filename.endswith('.mp4'):
-            filepath = os.path.join(detector.recordings_path, filename)
-            size = os.path.getsize(filepath)
-            created = datetime.fromtimestamp(os.path.getctime(filepath))
-            recs.append({
-                'filename': filename,
-                'size_mb': round(size / (1024*1024), 2),
-                'created': created.strftime('%Y-%m-%d %H:%M:%S')
-            })
-    recs.sort(key=lambda x: x['created'], reverse=True)
-    return jsonify(recs)
+@app.route('/settings')
+def get_settings():
+    return jsonify({
+        'threshold': detector.threshold,
+        'min_area': detector.min_area,
+        'recording_duration': detector.recording_duration,
+        'rotation': detector.rotation,
+    })
+
+@app.route('/network_info')
+def network_info():
+    return jsonify({
+        'hostname': detector.get_hostname(),
+        'ip': detector.get_local_ip(),
+    })
 
 @app.route('/save_zone', methods=['POST'])
 def save_zone():
-    """
-    Expects JSON: { "x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8 }
-    All values are normalised (0.0 – 1.0) relative to frame dimensions.
-    """
     data = request.get_json()
     try:
         x = float(data['x'])
         y = float(data['y'])
         w = float(data['w'])
         h = float(data['h'])
-        # Basic validation
         if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1):
             raise ValueError("Values out of range")
         detector.save_motion_zone(x, y, w, h)
@@ -469,7 +479,6 @@ def save_zone():
 
 @app.route('/toggle_alerts', methods=['POST'])
 def toggle_alerts():
-    """Toggle Telegram alerts on/off. Optionally pass { "enabled": true/false }."""
     data = request.get_json(silent=True) or {}
     if 'enabled' in data:
         new_state = bool(data['enabled'])
@@ -480,10 +489,6 @@ def toggle_alerts():
 
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
-    """
-    Expects JSON with any combination of:
-    { "threshold": 25, "min_area": 500, "recording_duration": 30 }
-    """
     data = request.get_json()
     errors = {}
     updated = {}
@@ -542,7 +547,6 @@ def set_rotation():
         detector._ensure_section('camera')
         detector.config.set('camera', 'rotation', str(val))
         detector.save_config()
-        # Update logical frame dimensions
         base_w = int(detector.config['camera']['width'])
         base_h = int(detector.config['camera']['height'])
         if val in (90, 270):
@@ -553,32 +557,8 @@ def set_rotation():
     except (KeyError, ValueError, TypeError) as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/settings')
-def get_settings():
-    """Return current motion detection settings."""
-    return jsonify({
-        'threshold': detector.threshold,
-        'min_area': detector.min_area,
-        'recording_duration': detector.recording_duration,
-        'rotation': detector.rotation,
-    })
-
-@app.route('/network_info')
-def network_info():
-    """Return hostname and local IP."""
-    return jsonify({
-        'hostname': detector.get_hostname(),
-        'ip': detector.get_local_ip(),
-    })
-
-
 @app.route('/update_telegram', methods=['POST'])
 def update_telegram():
-    """
-    Update Telegram credentials.
-    Expects JSON: { "bot_token": "...", "chat_id": "..." }
-    At least one field must be present.
-    """
     data = request.get_json()
     if not data:
         return jsonify({'success': False, 'error': 'No data provided'}), 400
@@ -594,7 +574,7 @@ def update_telegram():
             detector.bot_token = val
             detector._ensure_section('telegram')
             detector.config.set('telegram', 'bot_token', val)
-            updated['bot_token'] = True   # don't echo the token back
+            updated['bot_token'] = True
 
     if 'chat_id' in data:
         val = str(data['chat_id']).strip()
@@ -623,30 +603,241 @@ def test_telegram():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/telegram')
-def telegram_page():
-    return render_template('telegram.html')
 
-RECORDINGS_DIR = detector.recordings_path
+# ==================================================================
+# Routes – Recordings (UI + streaming)
+# ==================================================================
 
-def safe_path(filename):
-    path = os.path.abspath(os.path.join(RECORDINGS_DIR, filename))
-    if not path.startswith(RECORDINGS_DIR):
-        raise ValueError("Invalid path")
-    return path
+@app.route('/recordings')
+def recordings():
+    """Full list, newest first. Includes index field for prev/next navigation."""
+    recs = detector.get_sorted_recordings()
+    for i, r in enumerate(recs):
+        r['index'] = i          # 0 = newest
+    return jsonify(recs)
 
 @app.route('/recordings/<filename>')
 def view_recording(filename):
     path = safe_path(filename)
-    return send_from_directory(RECORDINGS_DIR, os.path.basename(path), mimetype='video/mp4', conditional=True, as_attachment=False)  # opens in browser
+    return send_from_directory(
+        RECORDINGS_DIR,
+        os.path.basename(path),
+        mimetype='video/mp4',
+        conditional=True,
+        as_attachment=False,
+    )
 
 @app.route('/download/<filename>')
 def download_recording(filename):
     try:
         path = safe_path(filename)
         return send_from_directory(RECORDINGS_DIR, os.path.basename(path), as_attachment=True)
-    except:
+    except Exception:
         return "Invalid file", 400
+
+
+# ==================================================================
+# API – Remote recording browser  (JSON, paginated, with neighbour links)
+# ==================================================================
+
+@app.route('/api/recordings')
+def api_recordings():
+    """
+    Paginated recording list for remote clients.
+
+    Query parameters:
+        page    – 1-based page number (default: 1)
+        per_page – items per page (default: 20, max: 100)
+
+    Response:
+    {
+        "page": 1,
+        "per_page": 20,
+        "total": 42,
+        "total_pages": 3,
+        "recordings": [
+            {
+                "index": 0,           // 0 = newest
+                "filename": "motion_20240101_120000.mp4",
+                "size_mb": 12.3,
+                "created": "2024-01-01 12:00:00",
+                "view_url": "/api/recordings/motion_20240101_120000.mp4/stream",
+                "download_url": "/download/motion_20240101_120000.mp4",
+                "prev": "motion_...",  // older recording filename or null
+                "next": "motion_...",  // newer recording filename or null
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        per_page = min(100, max(1, int(request.args.get('per_page', 20))))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid pagination parameters'}), 400
+
+    all_recs = detector.get_sorted_recordings()
+    total = len(all_recs)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, total_pages)
+
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_recs = all_recs[start:end]
+
+    result = []
+    for local_i, rec in enumerate(page_recs):
+        global_i = start + local_i          # index within all_recs (0 = newest)
+        prev_filename = all_recs[global_i + 1]['filename'] if global_i + 1 < total else None   # older
+        next_filename = all_recs[global_i - 1]['filename'] if global_i - 1 >= 0 else None      # newer
+
+        result.append({
+            'index': global_i,
+            'filename': rec['filename'],
+            'size_mb': rec['size_mb'],
+            'created': rec['created'],
+            'view_url': f"/api/recordings/{rec['filename']}/stream",
+            'download_url': f"/download/{rec['filename']}",
+            'prev': prev_filename,
+            'next': next_filename,
+        })
+
+    return jsonify({
+        'page': page,
+        'per_page': per_page,
+        'total': total,
+        'total_pages': total_pages,
+        'recordings': result,
+    })
+
+
+@app.route('/api/recordings/<filename>/info')
+def api_recording_info(filename):
+    """
+    Return metadata + neighbour links for a single recording by filename.
+
+    Response:
+    {
+        "filename": "...",
+        "size_mb": 12.3,
+        "created": "...",
+        "index": 5,
+        "total": 42,
+        "prev": "<older filename or null>",
+        "next": "<newer filename or null>",
+        "view_url": "/api/recordings/.../stream",
+        "download_url": "/download/..."
+    }
+    """
+    all_recs = detector.get_sorted_recordings()
+    idx = next((i for i, r in enumerate(all_recs) if r['filename'] == filename), None)
+    if idx is None:
+        return jsonify({'error': 'Recording not found'}), 404
+
+    rec = all_recs[idx]
+    return jsonify({
+        'filename': rec['filename'],
+        'size_mb': rec['size_mb'],
+        'created': rec['created'],
+        'index': idx,
+        'total': len(all_recs),
+        'prev': all_recs[idx + 1]['filename'] if idx + 1 < len(all_recs) else None,
+        'next': all_recs[idx - 1]['filename'] if idx - 1 >= 0 else None,
+        'view_url': f"/api/recordings/{rec['filename']}/stream",
+        'download_url': f"/download/{rec['filename']}",
+    })
+
+
+@app.route('/api/recordings/<filename>/stream')
+def api_stream_recording(filename):
+    """
+    Stream a recording with HTTP Range support (byte-range requests).
+    This allows seek/scrub in remote video players.
+    """
+    try:
+        filepath = safe_path(filename)
+    except ValueError:
+        return jsonify({'error': 'Invalid filename'}), 400
+
+    if not os.path.isfile(filepath):
+        return jsonify({'error': 'Recording not found'}), 404
+
+    file_size = os.path.getsize(filepath)
+    range_header = request.headers.get('Range', None)
+
+    if range_header:
+        # Parse "bytes=start-end"
+        try:
+            byte_range = range_header.replace('bytes=', '').split('-')
+            start = int(byte_range[0])
+            end = int(byte_range[1]) if byte_range[1] else file_size - 1
+        except (IndexError, ValueError):
+            return jsonify({'error': 'Invalid Range header'}), 416
+
+        end = min(end, file_size - 1)
+        chunk_size = end - start + 1
+
+        def generate_range():
+            with open(filepath, 'rb') as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    data = f.read(min(65536, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        headers = {
+            'Content-Range': f'bytes {start}-{end}/{file_size}',
+            'Accept-Ranges': 'bytes',
+            'Content-Length': str(chunk_size),
+            'Content-Type': 'video/mp4',
+            'Cache-Control': 'no-cache',
+        }
+        return Response(generate_range(), status=206, headers=headers)
+
+    # Full file
+    def generate_full():
+        with open(filepath, 'rb') as f:
+            while True:
+                data = f.read(65536)
+                if not data:
+                    break
+                yield data
+
+    headers = {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': str(file_size),
+        'Content-Type': 'video/mp4',
+        'Cache-Control': 'no-cache',
+    }
+    return Response(generate_full(), status=200, headers=headers)
+
+
+@app.route('/api/recordings/latest')
+def api_latest_recording():
+    """Shortcut – returns info for the most recent recording."""
+    all_recs = detector.get_sorted_recordings()
+    if not all_recs:
+        return jsonify({'error': 'No recordings found'}), 404
+    rec = all_recs[0]
+    return jsonify({
+        'filename': rec['filename'],
+        'size_mb': rec['size_mb'],
+        'created': rec['created'],
+        'index': 0,
+        'total': len(all_recs),
+        'prev': all_recs[1]['filename'] if len(all_recs) > 1 else None,
+        'next': None,
+        'view_url': f"/api/recordings/{rec['filename']}/stream",
+        'download_url': f"/download/{rec['filename']}",
+    })
+
+
+# ==================================================================
+# Startup
+# ==================================================================
 
 def find_free_port(start=5000, end=5100):
     for port in range(start, end):
