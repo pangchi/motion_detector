@@ -61,6 +61,9 @@ class MotionDetector:
         # Camera state
         self.camera = None
         self.camera_ready = False
+        self._read_fail_count = 0
+        self._READ_FAIL_THRESHOLD = 10  # consecutive failures before declaring disconnect
+        self._disconnect_lock = threading.Lock()
         self._open_camera()  # attempt initial open; sets camera_ready
 
         os.makedirs(self.recordings_path, exist_ok=True)
@@ -90,6 +93,7 @@ class MotionDetector:
                 self.camera.release()
             self.camera = cap
             self.camera_ready = True
+            self._read_fail_count = 0
             return True
         else:
             if cap:
@@ -216,8 +220,13 @@ class MotionDetector:
             return None
         ret, frame = self.camera.read()
         if not ret:
-            self._handle_camera_disconnect()
+            self._read_fail_count += 1
+            if self._read_fail_count >= self._READ_FAIL_THRESHOLD:
+                with self._disconnect_lock:
+                    if self.camera_ready:  # recheck inside lock
+                        self._handle_camera_disconnect()
             return None
+        self._read_fail_count = 0  # reset on any successful read
         return self._rotate_frame(frame)
 
     def _handle_camera_disconnect(self):
@@ -605,8 +614,8 @@ def update_settings():
     if 'recording_duration' in data:
         try:
             val = int(data['recording_duration'])
-            if not (5 <= val <= 300):
-                raise ValueError("Must be between 5 and 300 seconds")
+            if not (5 <= val <= 600):
+                raise ValueError("Must be between 5 and 600 seconds")
             detector.recording_duration = val
             detector._ensure_section('motion')
             detector.config.set('motion', 'recording_duration', str(val))
