@@ -216,8 +216,30 @@ class MotionDetector:
             return None
         ret, frame = self.camera.read()
         if not ret:
+            self._handle_camera_disconnect()
             return None
         return self._rotate_frame(frame)
+
+    def _handle_camera_disconnect(self):
+        """Called once when a live camera stops responding. Sends alert and starts watchdog."""
+        if not self.camera_ready:
+            return  # already handled, avoid duplicate alerts
+        self.camera_ready = False
+        if self.camera is not None:
+            self.camera.release()
+            self.camera = None
+        print("Camera disconnected.")
+        ip = self.get_local_ip()
+        port = self.port or 5000
+        self.send_telegram_message(
+            f"🔌 Camera unplugged / lost!\n"
+            f"Host: {self.get_hostname()}\n"
+            f"IP: {ip}\n"
+            f"Web Interface: http://{ip}:{port}\n"
+            f"Waiting for camera to be reconnected…",
+            override=True
+        )
+        self._start_camera_watchdog()
 
     def _zone_roi(self, frame):
         """Crop frame to the current motion zone."""
@@ -236,7 +258,7 @@ class MotionDetector:
         roi, _ = self._zone_roi(frame)
         learning_rate = 0 if self.is_recording else 0.05
         fg_mask = self.background_subtractor.apply(roi, learningRate=learning_rate)
-        _, fg_mask = cv2.threshold(fg_mask, max(60, self.threshold), 255, cv2.THRESH_BINARY)
+        _, fg_mask = cv2.threshold(fg_mask, max(140, self.threshold), 255, cv2.THRESH_BINARY)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         fg_mask = cv2.morphologyEx(
             fg_mask,
