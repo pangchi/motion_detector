@@ -267,7 +267,7 @@ class MotionDetector:
         roi, _ = self._zone_roi(frame)
         learning_rate = 0 if self.is_recording else 0.05
         fg_mask = self.background_subtractor.apply(roi, learningRate=learning_rate)
-        _, fg_mask = cv2.threshold(fg_mask, max(140, self.threshold), 255, cv2.THRESH_BINARY)
+        _, fg_mask = cv2.threshold(fg_mask, self.threshold, 255, cv2.THRESH_BINARY)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         fg_mask = cv2.morphologyEx(
             fg_mask,
