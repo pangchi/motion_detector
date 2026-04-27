@@ -54,6 +54,10 @@ class MotionDetector:
         self.background_subtractor = cv2.createBackgroundSubtractorMOG2()
         self.is_recording = False
         self.last_motion_time = 0
+        self.recording_end_time = 0          # time last recording finished
+        self._post_rec_freeze = 3.0          # seconds to freeze BG learning after recording
+        self._motion_frame_count = 0         # consecutive frames with motion
+        self._MOTION_DEBOUNCE = 3            # frames required before triggering record
 
         # Runtime port (set by __main__ after find_free_port())
         self.port = None
@@ -94,6 +98,10 @@ class MotionDetector:
             self.camera = cap
             self.camera_ready = True
             self._read_fail_count = 0
+            # Fresh BG model so reconnect doesn't trigger a false detection
+            self.background_subtractor = cv2.createBackgroundSubtractorMOG2()
+            self._motion_frame_count = 0
+            self.recording_end_time = time.time()  # enforce post-rec freeze on reconnect
             return True
         else:
             if cap:
@@ -265,10 +273,11 @@ class MotionDetector:
 
     def detect_motion(self, frame):
         roi, _ = self._zone_roi(frame)
-        learning_rate = 0 if self.is_recording else 0.05
+        # Freeze background learning while recording OR during post-recording cool-down
+        freeze = self.is_recording or (time.time() - self.recording_end_time < self._post_rec_freeze)
+        learning_rate = 0 if freeze else 0.05
         fg_mask = self.background_subtractor.apply(roi, learningRate=learning_rate)
         _, fg_mask = cv2.threshold(fg_mask, self.threshold, 255, cv2.THRESH_BINARY)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         fg_mask = cv2.morphologyEx(
             fg_mask,
             cv2.MORPH_OPEN,
@@ -305,6 +314,10 @@ class MotionDetector:
         finally:
             out.release()
             self.is_recording = False
+            self.recording_end_time = time.time()
+            # Fresh background model so stale state doesn't trigger immediately
+            self.background_subtractor = cv2.createBackgroundSubtractorMOG2()
+            self._motion_frame_count = 0
         print(f"Recording completed: {filename}")
         self.send_telegram_message(f"📹 Motion detected! Recording saved: {timestamp}")
 
@@ -312,16 +325,22 @@ class MotionDetector:
         def motion_loop():
             while True:
                 if not self.camera_ready:
+                    self._motion_frame_count = 0
                     time.sleep(1)
                     continue
                 frame = self.get_frame()
                 if frame is not None:
                     motion_detected, _ = self.detect_motion(frame)
                     if motion_detected and not self.is_recording:
-                        current_time = time.time()
-                        if current_time - self.last_motion_time > 5:
-                            self.last_motion_time = current_time
-                            threading.Thread(target=self.record_video, daemon=True).start()
+                        self._motion_frame_count += 1
+                        if self._motion_frame_count >= self._MOTION_DEBOUNCE:
+                            current_time = time.time()
+                            if current_time - self.last_motion_time > 5:
+                                self._motion_frame_count = 0
+                                self.last_motion_time = current_time
+                                threading.Thread(target=self.record_video, daemon=True).start()
+                    else:
+                        self._motion_frame_count = 0
                 time.sleep(0.1)
         threading.Thread(target=motion_loop, daemon=True).start()
 
